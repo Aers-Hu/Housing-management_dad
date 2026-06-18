@@ -6,6 +6,23 @@ export interface Room {
   isOccupied: boolean;  // 是否入住
   tenantName: string;   // 租客姓名
   monthlyRent: number;  // 每月房租
+  // 租期相关
+  leaseStartDate?: string;  // 租期开始日期 (YYYY-MM-DD)
+  leaseMonths?: number;     // 租期月数
+}
+
+// 计算剩余租期（月）
+export function calculateRemainingMonths(leaseStartDate?: string, leaseMonths?: number): number {
+  if (!leaseStartDate || !leaseMonths) return 0;
+  
+  const start = new Date(leaseStartDate);
+  const now = new Date();
+  
+  // 计算已过去的月数
+  const monthsDiff = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
+  
+  const remaining = leaseMonths - monthsDiff;
+  return Math.max(0, remaining);
 }
 
 // 生成所有房间数据
@@ -42,4 +59,9 @@ export function groupRoomsByFloor(rooms: Room[]): Map<number, Room[]> {
 // 根据ID查找房间
 export function findRoomById(rooms: Room[], id: string): Room | undefined {
   return rooms.find(r => r.id === id);
+}
+
+// 获取所有空房间
+export function getVacantRooms(rooms: Room[]): Room[] {
+  return rooms.filter(r => !r.isOccupied);
 }
