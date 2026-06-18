@@ -23,6 +23,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ title: "" }} />
+        <Stack.Screen name="room" options={{ title: "房间详情" }} />
       </Stack>
       <Toast />
     </Provider>
