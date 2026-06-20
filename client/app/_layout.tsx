@@ -8,7 +8,6 @@ import '../global.css';
 
 LogBox.ignoreLogs([
   "TurboModuleRegistry.getEnforcing(...): 'RNMapsAirModule' could not be found",
-  // 添加其它想暂时忽略的错误或警告信息
 ]);
 
 export default function RootLayout() {
@@ -19,11 +18,12 @@ export default function RootLayout() {
           animation: 'slide_from_right',
           gestureEnabled: true,
           gestureDirection: 'horizontal',
-          headerShown: false
+          headerShown: false,
         }}
       >
-        <Stack.Screen name="index" options={{ title: "" }} />
-        <Stack.Screen name="room" options={{ title: "房间详情" }} />
+        <Stack.Screen name="index" options={{ title: '房屋管家' }} />
+        <Stack.Screen name="building" options={{ title: '楼房管理' }} />
+        <Stack.Screen name="room" options={{ title: '房间详情' }} />
       </Stack>
       <Toast />
     </Provider>

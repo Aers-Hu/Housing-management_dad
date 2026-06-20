@@ -175,8 +175,6 @@ export const SmartDateInput = ({
         display={Platform.OS === 'ios' ? 'spinner' : 'default'} 
         // 自动适配系统深色模式，或者根据 isDark 变量控制
         isDarkModeEnabled={isDark}
-        // 强制使用中文环境
-        locale="zh-CN"
         confirmTextIOS="确定"
         cancelTextIOS="取消"
       />

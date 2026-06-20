@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useState, useCallback } from 'react';
 import {
   View,
@@ -9,48 +8,59 @@ import {
   TextInput,
   Switch,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   Modal,
+  Platform,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { StorageService } from '@/utils/storage';
-import { Room, calculateRemainingMonths, getVacantRooms } from '@/utils/roomTypes';
+import { Building, Room, calculateRemainingMonths, getVacantRooms } from '@/utils/roomTypes';
 
 export default function RoomDetailScreen() {
   const router = useSafeRouter();
-  const { id } = useSafeSearchParams<{ id: string }>();
+  const { buildingId, roomId } = useSafeSearchParams<{ buildingId: string; roomId: string }>();
+
   const [room, setRoom] = useState<Room | null>(null);
+  const [building, setBuilding] = useState<Building | null>(null);
+
   const [isOccupied, setIsOccupied] = useState(false);
   const [tenantName, setTenantName] = useState('');
   const [monthlyRent, setMonthlyRent] = useState('');
   const [leaseStartDate, setLeaseStartDate] = useState('');
   const [leaseMonths, setLeaseMonths] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
+
+  // 转移
   const [transferModalVisible, setTransferModalVisible] = useState(false);
   const [allRooms, setAllRooms] = useState<Room[]>([]);
-  const [selectedTargetRoom, setSelectedTargetRoom] = useState<string>('');
+  const [selectedTargetRoomId, setSelectedTargetRoomId] = useState('');
 
-  const loadRoomData = useCallback(async () => {
-    const rooms = await StorageService.loadRooms();
-    const found = rooms.find((r) => r.id === id);
+  const loadData = useCallback(async () => {
+    if (!buildingId || !roomId) return;
+
+    const buildings = await StorageService.loadBuildings();
+    const bld = buildings.find(b => b.id === buildingId);
+    if (bld) setBuilding(bld);
+
+    const rooms = await StorageService.loadRooms(buildingId);
+    setAllRooms(rooms);
+
+    const found = rooms.find(r => r.id === roomId);
     if (found) {
       setRoom(found);
-      setAllRooms(rooms);
       setIsOccupied(found.isOccupied);
       setTenantName(found.tenantName || '');
       setMonthlyRent(found.monthlyRent ? String(found.monthlyRent) : '');
       setLeaseStartDate(found.leaseStartDate || '');
       setLeaseMonths(found.leaseMonths ? String(found.leaseMonths) : '');
     }
-  }, [id]);
+  }, [buildingId, roomId]);
 
   useEffect(() => {
-    if (id) {
-      loadRoomData();
-    }
-  }, [id, loadRoomData]);
+    if (buildingId && roomId) loadData();
+  }, [buildingId, roomId, loadData]);
+
+  // ========== 处理函数 ==========
 
   const handleOccupiedChange = (value: boolean) => {
     setIsOccupied(value);
@@ -63,14 +73,13 @@ export default function RoomDetailScreen() {
     }
   };
 
-  const handleNameChange = (text: string) => {
+  const handleTenantNameChange = (text: string) => {
     setTenantName(text);
     setHasChanges(true);
   };
 
   const handleRentChange = (text: string) => {
-    const numeric = text.replace(/\D/g, '');
-    setMonthlyRent(numeric);
+    setMonthlyRent(text.replace(/[^0-9]/g, ''));
     setHasChanges(true);
   };
 
@@ -80,8 +89,7 @@ export default function RoomDetailScreen() {
   };
 
   const handleMonthsChange = (text: string) => {
-    const numeric = text.replace(/\D/g, '');
-    setLeaseMonths(numeric);
+    setLeaseMonths(text.replace(/[^0-9]/g, ''));
     setHasChanges(true);
   };
 
@@ -90,22 +98,22 @@ export default function RoomDetailScreen() {
     leaseMonths ? parseInt(leaseMonths, 10) : undefined
   );
 
-  const vacantRooms = getVacantRooms(allRooms).filter(r => r.id !== id);
+  const vacantRooms = getVacantRooms(allRooms, buildingId || '').filter(r => r.id !== roomId);
 
+  // 保存
   const handleSave = async () => {
-    if (!room) return;
+    if (!room || !buildingId) return;
 
     if (isOccupied && !tenantName.trim()) {
       Alert.alert('提示', '请输入租客姓名');
       return;
     }
-
     if (isOccupied && !monthlyRent) {
       Alert.alert('提示', '请输入每月房租');
       return;
     }
 
-    const updatedRoom: Room = {
+    const updated: Room = {
       ...room,
       isOccupied,
       tenantName: tenantName.trim(),
@@ -114,35 +122,33 @@ export default function RoomDetailScreen() {
       leaseMonths: isOccupied && leaseMonths ? parseInt(leaseMonths, 10) : undefined,
     };
 
-    await StorageService.updateRoom(updatedRoom);
+    await StorageService.updateRoom(updated);
     setHasChanges(false);
     Alert.alert('保存成功', '房屋信息已更新', [
       { text: '确定', onPress: () => router.back() },
     ]);
   };
 
+  // 返回
   const handleBack = () => {
     if (hasChanges) {
-      Alert.alert(
-        '有未保存的更改',
-        '确定要返回吗？',
-        [
-          { text: '取消', style: 'cancel' },
-          { text: '确定', onPress: () => router.back() },
-        ]
-      );
+      Alert.alert('有未保存的更改', '确定要返回吗？', [
+        { text: '取消', style: 'cancel' },
+        { text: '确定', onPress: () => router.back() },
+      ]);
     } else {
       router.back();
     }
   };
 
+  // 转移
   const handleTransfer = async () => {
-    if (!room || !selectedTargetRoom) {
+    if (!room || !selectedTargetRoomId) {
       Alert.alert('提示', '请选择目标房间');
       return;
     }
 
-    const targetRoom = allRooms.find(r => r.id === selectedTargetRoom);
+    const targetRoom = allRooms.find(r => r.id === selectedTargetRoomId);
     if (!targetRoom) return;
 
     Alert.alert(
@@ -153,37 +159,24 @@ export default function RoomDetailScreen() {
         {
           text: '确认转移',
           onPress: async () => {
-            // 更新目标房间
-            const updatedTarget: Room = {
-              ...targetRoom,
-              isOccupied: true,
-              tenantName: room.tenantName,
-              monthlyRent: room.monthlyRent,
-              leaseStartDate: room.leaseStartDate,
-              leaseMonths: room.leaseMonths,
-            };
-            await StorageService.updateRoom(updatedTarget);
-
-            // 清空原房间
-            const clearedRoom: Room = {
-              ...room,
-              isOccupied: false,
-              tenantName: '',
-              monthlyRent: 0,
-              leaseStartDate: undefined,
-              leaseMonths: undefined,
-            };
-            await StorageService.updateRoom(clearedRoom);
-
-            setTransferModalVisible(false);
-            Alert.alert('转移成功', `${room.tenantName} 已转移到 ${targetRoom.number} 房间`, [
-              { text: '确定', onPress: () => router.back() },
-            ]);
+            try {
+              const result = await StorageService.transferTenant(room, selectedTargetRoomId);
+              setRoom(result.fromRoom);
+              setAllRooms(await StorageService.loadRooms(buildingId || ''));
+              setTransferModalVisible(false);
+              Alert.alert('转移成功', `${room.tenantName} 已转移到 ${targetRoom.number} 房间`, [
+                { text: '确定', onPress: () => router.back() },
+              ]);
+            } catch (err) {
+              Alert.alert('转移失败', '操作失败，请重试');
+            }
           },
         },
       ]
     );
   };
+
+  // ========== 渲染 ==========
 
   if (!room) {
     return (
@@ -196,233 +189,220 @@ export default function RoomDetailScreen() {
   }
 
   return (
-    <Screen>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <Screen scrollable>
+      {/* 顶部导航 */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+          <Text style={styles.backText}>← 返回</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>房间详情</Text>
+        <View style={styles.placeholder} />
+      </View>
+
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* 顶部导航 */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-            <Text style={styles.backText}>返回</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>房间 {room.number}</Text>
-          <View style={styles.placeholder} />
+        {/* 房间信息卡片 */}
+        <View style={styles.roomInfoCard}>
+          <View style={styles.roomIcon}>
+            <Text style={styles.roomIconText}>{room.number}</Text>
+          </View>
+          <View style={styles.roomDetails}>
+            <Text style={styles.buildingName}>{building?.name || '未知楼房'}</Text>
+            <Text style={styles.roomFloor}>第 {room.floor} 层</Text>
+            {room.name ? <Text style={styles.roomCustomName}>{room.name}</Text> : null}
+            <View style={[styles.statusBadge, isOccupied ? styles.statusOccupied : styles.statusVacant]}>
+              <Text style={[styles.statusText, isOccupied ? styles.statusTextOccupied : styles.statusTextVacant]}>
+                {isOccupied ? '已入住' : '空置中'}
+              </Text>
+            </View>
+          </View>
         </View>
 
-        <ScrollView
-          style={styles.content}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* 房间信息卡片 */}
-          <View style={styles.roomInfoCard}>
-            <View style={styles.roomIcon}>
-              <Text style={styles.roomIconText}>{room.number}</Text>
-            </View>
-            <View style={styles.roomDetails}>
-              <Text style={styles.roomFloor}>第 {room.floor} 层</Text>
-              <View
-                style={[
-                  styles.statusBadge,
-                  isOccupied ? styles.statusOccupied : styles.statusVacant,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusText,
-                    isOccupied ? styles.statusTextOccupied : styles.statusTextVacant,
-                  ]}
-                >
-                  {isOccupied ? '已入住' : '空置中'}
-                </Text>
-              </View>
-            </View>
+        {/* 入住开关 */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>入住状态</Text>
+          <View style={styles.switchRow}>
+            <Text style={styles.switchLabel}>{isOccupied ? '当前已入住' : '当前空置'}</Text>
+            <Switch
+              value={isOccupied}
+              onValueChange={handleOccupiedChange}
+              trackColor={{ false: '#E8E8EB', true: '#00B894' }}
+              thumbColor="#FFFFFF"
+            />
           </View>
+        </View>
 
-          {/* 入住开关 */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>入住状态</Text>
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>
-                {isOccupied ? '当前已入住' : '当前空置'}
-              </Text>
-              <Switch
-                value={isOccupied}
-                onValueChange={handleOccupiedChange}
-                trackColor={{ false: '#E8E8EB', true: '#00B894' }}
-                thumbColor="#FFFFFF"
-              />
-            </View>
-          </View>
+        {/* 租客信息区域 */}
+        {isOccupied && (
+          <>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>租客信息</Text>
 
-          {/* 租客信息区域 */}
-          {isOccupied && (
-            <>
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>租客信息</Text>
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>租客姓名</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={tenantName}
-                    onChangeText={handleNameChange}
-                    placeholder="请输入租客姓名"
-                    placeholderTextColor="#B2BEC3"
-                  />
-                </View>
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>每月房租 (元)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={monthlyRent}
-                    onChangeText={handleRentChange}
-                    placeholder="请输入每月房租"
-                    placeholderTextColor="#B2BEC3"
-                    keyboardType="numeric"
-                  />
-                </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>租客姓名</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={tenantName}
+                  onChangeText={handleTenantNameChange}
+                  placeholder="请输入租客姓名"
+                  placeholderTextColor="#B2BEC3"
+                />
               </View>
 
-              {/* 租期信息 */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>租期信息</Text>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>每月房租 (元)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={monthlyRent}
+                  onChangeText={handleRentChange}
+                  placeholder="请输入每月房租"
+                  placeholderTextColor="#B2BEC3"
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>租期开始日期</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={leaseStartDate}
-                    onChangeText={handleStartDateChange}
-                    placeholder="格式: 2024-01-01"
-                    placeholderTextColor="#B2BEC3"
-                  />
-                </View>
+            {/* 租期信息 */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>租期信息</Text>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>租期月数</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={leaseMonths}
-                    onChangeText={handleMonthsChange}
-                    placeholder="请输入租期总月数"
-                    placeholderTextColor="#B2BEC3"
-                    keyboardType="numeric"
-                  />
-                </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>租期开始日期</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={leaseStartDate}
+                  onChangeText={handleStartDateChange}
+                  placeholder="格式: 2024-01-01"
+                  placeholderTextColor="#B2BEC3"
+                />
+              </View>
 
-                {leaseStartDate && leaseMonths && (
-                  <View style={styles.remainingCard}>
-                    <View style={styles.remainingItem}>
-                      <Text style={styles.remainingLabel}>总租期</Text>
-                      <Text style={styles.remainingValue}>{leaseMonths} 个月</Text>
-                    </View>
-                    <View style={styles.remainingDivider} />
-                    <View style={styles.remainingItem}>
-                      <Text style={styles.remainingLabel}>剩余租期</Text>
-                      <Text style={[
-                        styles.remainingValue,
-                        remainingMonths <= 1 ? styles.remainingDanger : remainingMonths <= 3 ? styles.remainingWarning : styles.remainingSuccess
-                      ]}>
-                        {remainingMonths} 个月
-                      </Text>
-                    </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>租期总月数</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={leaseMonths}
+                  onChangeText={handleMonthsChange}
+                  placeholder="请输入租期总月数"
+                  placeholderTextColor="#B2BEC3"
+                  keyboardType="numeric"
+                />
+              </View>
+
+              {leaseStartDate && leaseMonths ? (
+                <View style={styles.remainingCard}>
+                  <View style={styles.remainingItem}>
+                    <Text style={styles.remainingLabel}>总租期</Text>
+                    <Text style={styles.remainingValue}>{leaseMonths} 个月</Text>
                   </View>
-                )}
-              </View>
-
-              {/* 转移功能 */}
-              <TouchableOpacity
-                style={styles.transferButton}
-                onPress={() => setTransferModalVisible(true)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.transferButtonText}>转移租客</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {/* 保存按钮 */}
-          <TouchableOpacity
-            style={[styles.saveButton, hasChanges && styles.saveButtonActive]}
-            onPress={handleSave}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.saveButtonText}>
-              {hasChanges ? '保存修改' : '保存'}
-            </Text>
-          </TouchableOpacity>
-
-          <View style={styles.bottomPadding} />
-        </ScrollView>
-
-        {/* 转移房间 Modal */}
-        <Modal
-          visible={transferModalVisible}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setTransferModalVisible(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>选择目标房间</Text>
-                <TouchableOpacity onPress={() => setTransferModalVisible(false)}>
-                  <Text style={styles.modalClose}>✕</Text>
-                </TouchableOpacity>
-              </View>
-
-              {vacantRooms.length === 0 ? (
-                <View style={styles.noRoomsContainer}>
-                  <Text style={styles.noRoomsText}>暂无可用空房间</Text>
-                </View>
-              ) : (
-                <ScrollView style={styles.roomsList}>
-                  {vacantRooms.map((r) => (
-                    <TouchableOpacity
-                      key={r.id}
+                  <View style={styles.remainingDivider} />
+                  <View style={styles.remainingItem}>
+                    <Text style={styles.remainingLabel}>剩余租期</Text>
+                    <Text
                       style={[
-                        styles.roomOption,
-                        selectedTargetRoom === r.id && styles.roomOptionSelected,
+                        styles.remainingValue,
+                        remainingMonths <= 1
+                          ? styles.remainingDanger
+                          : remainingMonths <= 3
+                            ? styles.remainingWarning
+                            : styles.remainingSuccess,
                       ]}
-                      onPress={() => setSelectedTargetRoom(r.id)}
                     >
-                      <View style={styles.roomOptionInfo}>
-                        <Text style={styles.roomOptionNumber}>{r.number}</Text>
-                        <Text style={styles.roomOptionFloor}>第 {r.floor} 层</Text>
-                      </View>
-                      {selectedTargetRoom === r.id && (
-                        <Text style={styles.roomOptionCheck}>✓</Text>
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
+                      {remainingMonths} 个月
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+            </View>
 
-              <TouchableOpacity
-                style={[
-                  styles.confirmTransferButton,
-                  !selectedTargetRoom && styles.confirmTransferButtonDisabled,
-                ]}
-                onPress={handleTransfer}
-                disabled={!selectedTargetRoom}
-              >
-                <Text style={styles.confirmTransferText}>确认转移</Text>
+            {/* 转移功能 */}
+            <TouchableOpacity
+              style={styles.transferButton}
+              onPress={() => setTransferModalVisible(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.transferButtonText}>转移租客到其他房间</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {/* 保存按钮 */}
+        <TouchableOpacity
+          style={[styles.saveButton, hasChanges && styles.saveButtonActive]}
+          onPress={handleSave}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.saveButtonText}>{hasChanges ? '保存修改' : '保存'}</Text>
+        </TouchableOpacity>
+
+        <View style={styles.bottomPadding} />
+      </ScrollView>
+
+      {/* ========== 转移 Modal ========== */}
+      <Modal
+        visible={transferModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setTransferModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>选择目标房间</Text>
+              <TouchableOpacity onPress={() => setTransferModalVisible(false)}>
+                <Text style={styles.modalClose}>✕</Text>
               </TouchableOpacity>
             </View>
+
+            {vacantRooms.length === 0 ? (
+              <View style={styles.noRoomsContainer}>
+                <Text style={styles.noRoomsText}>暂无可用空房间</Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.roomsList}>
+                {vacantRooms.map(r => (
+                  <TouchableOpacity
+                    key={r.id}
+                    style={[
+                      styles.roomOption,
+                      selectedTargetRoomId === r.id && styles.roomOptionSelected,
+                    ]}
+                    onPress={() => setSelectedTargetRoomId(r.id)}
+                  >
+                    <View style={styles.roomOptionInfo}>
+                      <Text style={styles.roomOptionNumber}>{r.number}</Text>
+                      <Text style={styles.roomOptionFloor}>第 {r.floor} 层</Text>
+                      {r.name ? <Text style={styles.roomOptionName}>{r.name}</Text> : null}
+                    </View>
+                    {selectedTargetRoomId === r.id && (
+                      <Text style={styles.roomOptionCheck}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity
+              style={[
+                styles.confirmTransferButton,
+                !selectedTargetRoomId && styles.confirmTransferButtonDisabled,
+              ]}
+              onPress={handleTransfer}
+              disabled={!selectedTargetRoomId}
+            >
+              <Text style={styles.confirmTransferText}>确认转移</Text>
+            </TouchableOpacity>
           </View>
-        </Modal>
-      </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -447,6 +427,7 @@ const styles = StyleSheet.create({
   backText: {
     fontSize: 16,
     color: '#6C63FF',
+    fontWeight: '600',
   },
   headerTitle: {
     fontSize: 18,
@@ -456,7 +437,6 @@ const styles = StyleSheet.create({
   placeholder: {
     width: 60,
   },
-  // 内容
   content: {
     flex: 1,
   },
@@ -494,10 +474,22 @@ const styles = StyleSheet.create({
     marginLeft: 20,
     flex: 1,
   },
+  buildingName: {
+    fontSize: 14,
+    color: '#6C63FF',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
   roomFloor: {
     fontSize: 14,
     color: '#636E72',
-    marginBottom: 8,
+    marginBottom: 4,
+  },
+  roomCustomName: {
+    fontSize: 13,
+    color: '#6C63FF',
+    fontWeight: '600',
+    marginBottom: 4,
   },
   statusBadge: {
     alignSelf: 'flex-start',
@@ -692,6 +684,12 @@ const styles = StyleSheet.create({
   roomOptionFloor: {
     fontSize: 13,
     color: '#636E72',
+  },
+  roomOptionName: {
+    fontSize: 12,
+    color: '#6C63FF',
+    marginLeft: 8,
+    fontWeight: '600',
   },
   roomOptionCheck: {
     fontSize: 18,
