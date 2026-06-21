@@ -354,6 +354,61 @@ class BuildingDialog(tk.Toplevel):
         else:
             self._floor_entries = {}
 
+        # ---- 批量修改房屋名字（仅编辑模式） ----
+        if self.building:
+            tk.Label(self, text="🔧 批量操作", font=FONT_HEADER,
+                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(18,4))
+
+            # 查找/替换行
+            br_frame = tk.Frame(self, bg=C["card"],
+                                highlightbackground=C["border"], highlightthickness=1)
+            br_frame.pack(fill=tk.X, padx=pad_x, pady=4)
+            br_inner = tk.Frame(br_frame, bg=C["card"])
+            br_inner.pack(fill=tk.X, padx=12, pady=10)
+
+            tk.Label(br_inner, text="批量修改房屋名字", font=FONT_BODY,
+                     fg=C["text"], bg=C["card"]).pack(anchor=tk.W, pady=(0,8))
+
+            row1 = tk.Frame(br_inner, bg=C["card"])
+            row1.pack(fill=tk.X, pady=2)
+            tk.Label(row1, text="查找：", font=FONT_SMALL,
+                     fg=C["text_secondary"], bg=C["card"], width=6).pack(side=tk.LEFT)
+            self.br_find_var = tk.StringVar()
+            tk.Entry(row1, textvariable=self.br_find_var, font=FONT_SMALL,
+                     relief=tk.FLAT, bd=0, bg=C["bg"], fg=C["text"], width=14,
+                     insertbackground=C["primary"],
+                     highlightbackground=C["border"],
+                     highlightcolor=C["primary"],
+                     highlightthickness=1).pack(side=tk.LEFT, ipady=4)
+            tk.Label(row1, text="  替换为：", font=FONT_SMALL,
+                     fg=C["text_secondary"], bg=C["card"]).pack(side=tk.LEFT)
+            self.br_repl_var = tk.StringVar()
+            tk.Entry(row1, textvariable=self.br_repl_var, font=FONT_SMALL,
+                     relief=tk.FLAT, bd=0, bg=C["bg"], fg=C["text"], width=14,
+                     insertbackground=C["primary"],
+                     highlightbackground=C["border"],
+                     highlightcolor=C["primary"],
+                     highlightthickness=1).pack(side=tk.LEFT, ipady=4)
+
+            # 示例提示
+            tk.Label(br_inner, text="例：查找 01 替换为 81 → 0102 改名为 8102",
+                     font=("Microsoft YaHei UI", 7), fg=C["text_dim"],
+                     bg=C["card"]).pack(anchor=tk.W, pady=(4,2))
+
+            # 预览结果
+            self.br_preview = tk.Label(br_inner, text="", font=FONT_SMALL,
+                                       fg=C["primary"], bg=C["card"], justify=tk.LEFT)
+            self.br_preview.pack(anchor=tk.W, pady=(4,0))
+
+            # 监听输入变化实时预览
+            self.br_find_var.trace_add("write", lambda *a: self._preview_rename())
+            self.br_repl_var.trace_add("write", lambda *a: self._preview_rename())
+
+            # 应用按钮
+            RoundedBtn(br_inner, "应用批量改名", command=self._apply_batch_rename,
+                       bg=C["primary_dim"], fg=C["white"], font=FONT_SMALL,
+                       width=120, height=28, canvas_bg=C["card"]).pack(pady=(8,2))
+
         # ---- 按钮（直接在窗口底部） ----
         bf = tk.Frame(self, bg=C["bg"])
         bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(16,14), padx=pad_x)
@@ -397,6 +452,44 @@ class BuildingDialog(tk.Toplevel):
     def _on_floors_change(self):
         if self.building and hasattr(self, '_floor_entries'):
             self._build_floor_label_entries()
+
+    def _preview_rename(self):
+        """预览批量改名的效果"""
+        find = self.br_find_var.get().strip()
+        repl = self.br_repl_var.get().strip()
+        if not find:
+            self.br_preview.configure(text="")
+            return
+        rooms = self.building.get("rooms", [])
+        changed = [r for r in rooms if find in r.get("name", "")]
+        if not changed:
+            self.br_preview.configure(text="（无匹配房间）", fg=C["text_dim"])
+        else:
+            examples = [f"{r['name']}→{r['name'].replace(find, repl)}"
+                        for r in changed[:5]]
+            more = f" ...等{len(changed)}间" if len(changed) > 5 else ""
+            self.br_preview.configure(
+                text="预览：" + "、".join(examples) + more,
+                fg=C["primary"])
+
+    def _apply_batch_rename(self):
+        """执行批量改名"""
+        find = self.br_find_var.get().strip()
+        repl = self.br_repl_var.get().strip()
+        if not find:
+            messagebox.showwarning("提示", "请输入查找内容", parent=self); return
+        rooms = self.building.get("rooms", [])
+        changed = [r for r in rooms if find in r.get("name", "")]
+        if not changed:
+            messagebox.showinfo("提示", "没有匹配的房间", parent=self); return
+        count = len(changed)
+        if messagebox.askyesno("确认", f"将 {count} 间房屋名字中的\n\"{find}\" → \"{repl}\"\n\n确认？",
+                               parent=self):
+            for r in changed:
+                r["name"] = r["name"].replace(find, repl)
+            self.br_find_var.set("")
+            self.br_repl_var.set("")
+            messagebox.showinfo("完成", f"已修改 {count} 间房屋名字", parent=self)
 
     def _save(self):
         name = self.name_var.get().strip()
