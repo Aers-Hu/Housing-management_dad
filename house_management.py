@@ -1211,14 +1211,17 @@ class App(tk.Tk):
         inn = tk.Frame(card, bg=C["card"])
         inn.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
-        tk.Label(inn, text=room["id"], font=("Segoe UI", 15, "bold"),
+        # 主标题：自定义名优先替换原ID显示
+        display_name = room.get("name", room["id"])
+        is_custom = (display_name != room["id"])
+        tk.Label(inn, text=display_name,
+                 font=("Segoe UI", 15, "bold") if not is_custom else ("Microsoft YaHei UI", 12, "bold"),
                  fg=C["primary"] if not occ else C["text"],
                  bg=C["card"]).pack(pady=(6, 0))
-
-        name = room.get("name", room["id"])
-        if name != room["id"]:
-            tk.Label(inn, text=name, font=FONT_SMALL,
-                     fg=C["text_secondary"], bg=C["card"]).pack()
+        # 若名字被自定义，在下方用小字标注原房间号
+        if is_custom:
+            tk.Label(inn, text=f"#{room['id']}", font=("Microsoft YaHei UI", 7),
+                     fg=C["text_dim"], bg=C["card"]).pack()
 
         if occ:
             tk.Label(inn, text="● 已入住", font=("Microsoft YaHei UI", 8),
