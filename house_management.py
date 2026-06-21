@@ -572,7 +572,9 @@ class RoomDialog(tk.Toplevel):
         cw = cv.create_window((0,0), window=self.ct, anchor=tk.NW, width=560)
         cv.configure(yscrollcommand=sb.set)
         cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
-        cv.bind_all("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta/120),"units"))
+        cv.bind("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta/120),"units"))
+        # 让内容区也能响应滚轮
+        self.ct.bind("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta/120),"units"))
         cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -818,8 +820,6 @@ class RoomDialog(tk.Toplevel):
         self._on_save(self.room); self.destroy()
 
     def destroy(self):
-        try: self.unbind_all("<MouseWheel>")
-        except: pass
         super().destroy()
 
 
@@ -1009,6 +1009,7 @@ class App(tk.Tk):
         cw = cv.create_window((0,0), window=self.card_frm, anchor=tk.NW)
         cv.configure(yscrollcommand=scr.set)
         cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
+        cv.bind("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta/120), "units"))
         cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scr.pack(side=tk.RIGHT, fill=tk.Y)
         search.bind("<KeyRelease>", lambda e: self._refresh_cards(search.get()))
@@ -1128,6 +1129,7 @@ class App(tk.Tk):
         cw = cv.create_window((0,0), window=ct, anchor=tk.NW)
         cv.configure(yscrollcommand=vsb.set)
         cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
+        cv.bind("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta/120), "units"))
         cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -1218,10 +1220,6 @@ class App(tk.Tk):
                  font=("Segoe UI", 15, "bold") if not is_custom else ("Microsoft YaHei UI", 12, "bold"),
                  fg=C["primary"] if not occ else C["text"],
                  bg=C["card"]).pack(pady=(6, 0))
-        # 若名字被自定义，在下方用小字标注原房间号
-        if is_custom:
-            tk.Label(inn, text=f"#{room['id']}", font=("Microsoft YaHei UI", 7),
-                     fg=C["text_dim"], bg=C["card"]).pack()
 
         if occ:
             tk.Label(inn, text="● 已入住", font=("Microsoft YaHei UI", 8),
