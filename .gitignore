@@ -2,25 +2,101 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Virtual environments
+.venv/
+.env
 
 # PyInstaller
 build/
 dist/
 *.spec
 
-# IDE
-.idea/
+# JS/TS bundlers & build outputs
+.next
+.nuxt
+.turbo
+.vercel
+.parcel-cache
+.cache
+coverage
+storybook-static
+
+# Package manager artifacts
+.pnp*
+.npm
+node_modules/
+node-compile-cache/
+
+# Go tooling
+bin/
+*.test
+
+# Editor / IDE
 .vscode/
+.idea/
+*.iml
 *.swp
 *.swo
 
-# OS
+# OS / misc
 .DS_Store
 Thumbs.db
+ehthumbs.db
 
 # 数据文件（本地租客数据不上传）
 housing_data.json
 
-# 临时文件
+# 临时文件 / 日志
 *.log
+*.log.*
 *.tmp
+output.log
+logs/
+
+# 视频文件
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.mkv
+*.webm
+*.m4v
+*.mpeg
+*.mpg
+*.3gp
+*.f4v
+*.rmvb
+*.vob
+
+# 归档文件
+*.iso
+*.dmg
+*.rar
+*.zip
+*.gz
+
+# 文档
+*.pdf
+*.docx
+*.doc
+*.xlsx
+*.xls
+*.ppt
+*.pptx
+*.csv
+
+# Coze / Preview
+.cozeproj/
+.preview
+.expo/
+.expo-shared/
+.eslintcache
+expo/expo-env.d.ts
+expo-env.d.ts
+*.tsbuildinfo
