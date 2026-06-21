@@ -568,15 +568,15 @@ class RoomDialog(tk.Toplevel):
 
         # 按钮竖向排列：取消在上，保存在下
         bf = tk.Frame(self, bg=C["bg"])
-        bf.pack(fill=tk.X, pady=(12,14), padx=24)
+        bf.pack(fill=tk.X, pady=(8,10), padx=24)
         RoundedBtn(bf, "取消", command=self.destroy,
-                   bg=C["border"], fg=C["text"], width=200, height=40,
-                   canvas_bg=C["bg"]).pack(pady=3)
+                   bg=C["border"], fg=C["text"], width=120, height=32,
+                   canvas_bg=C["bg"]).pack(pady=2)
         self.transfer_btn = RoundedBtn(bf, "🔄 转移租客", command=self._do_transfer,
-                                       bg=C["warning"], width=200, height=40,
+                                       bg=C["warning"], width=120, height=32,
                                        canvas_bg=C["bg"])
-        RoundedBtn(bf, "💾 保存", command=self._save, width=200, height=40,
-                   canvas_bg=C["bg"]).pack(pady=3)
+        RoundedBtn(bf, "💾 保存", command=self._save, width=120, height=32,
+                   canvas_bg=C["bg"]).pack(pady=2)
 
     def _apply_default_amount(self):
         """将默认金额应用到所有月份"""
