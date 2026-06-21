@@ -183,7 +183,7 @@ class RoundedBtn(tk.Canvas):
         if self._p and self.cmd: self.cmd()
         self._p=False; self._draw()
     def _o(self,e): self._draw(hover=True)
-    def _l(self,e): self._p=False; self._draw()
+    def _l(self,e): self._draw()  # 不重置_p，避免鼠标微动导致点击失效
 
 
 class BackBtn(tk.Canvas):
