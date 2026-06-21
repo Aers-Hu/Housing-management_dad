@@ -368,8 +368,9 @@ class BuildingDialog(tk.Toplevel):
             self._floor_labels_warn.pack(pady=(10,0))
             self._floor_labels_warn.configure(text="（新建后可在编辑中修改楼层号）")
 
-        # 按钮
-        bf = tk.Frame(self, bg=C["bg"]); bf.pack(pady=16)
+        # 按钮 - 固定在底部
+        bf = tk.Frame(self, bg=C["bg"])
+        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=16, padx=24)
         RoundedBtn(bf, "取消", command=self.destroy,
                    bg=C["border"], fg=C["text"], width=100, height=38,
                    canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
