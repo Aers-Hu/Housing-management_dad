@@ -158,8 +158,8 @@ class RoundedBtn(tk.Canvas):
         self.btn_bg, self.fg, self.cmd, self.txt = bg, fg, command, text
         self.w, self.h, self.font = width, height, font
         self._p = False
-        for e, cb in [("<B1>",self._d),("<Enter>",self._o),
-                      ("<Leave>",self._l),("<B1-Release>",self._u)]:
+        for e, cb in [("<Button-1>",self._d),("<Enter>",self._o),
+                      ("<Leave>",self._l),("<ButtonRelease-1>",self._u)]:
             self.bind(e, cb)
         self._draw()
 
@@ -192,7 +192,7 @@ class BackBtn(tk.Canvas):
         super().__init__(parent, width=38, height=38,
                          bg=bg, highlightthickness=0, **kw)
         self.cmd = command
-        self.bind("<B1>", lambda e: self.cmd())
+        self.bind("<Button-1>", lambda e: self.cmd())
         self.bind("<Enter>", self._o); self.bind("<Leave>", self._l)
         self._draw(False)
     def _draw(self, h):
