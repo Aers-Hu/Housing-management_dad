@@ -1,141 +1,72 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-楼房管理系统 v2.1 - House Management System
-多主题风格 · 简洁房间网格 · 完整租客管理
+楼房管理系统 v2.2 - House Management System
+横向滚动 · 楼层重命名 · 租金金额 · 多主题
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-import json
-import os
-import sys
+import json, os, sys
 from datetime import datetime, timedelta
 
 # ============================================================
-# 主题系统 - 5套年轻化配色
+# 5套主题
 # ============================================================
 THEMES = {
     "暗夜黑": {
-        "name": "暗夜黑",
-        "icon": "🌙",
-        "bg":            "#1A1A1E",
-        "card":          "#252528",
-        "card_hover":    "#2E2E33",
-        "surface":       "#1E1E22",
-        "topbar":        "#16161A",
-        "sidebar_bg":    "#121215",
-        "primary":       "#4A9EFF",
-        "primary_dim":   "#2A5A8F",
-        "success":       "#4CAF50",
-        "danger":        "#EF5350",
-        "warning":       "#FF9800",
-        "text":          "#E8E8ED",
-        "text_secondary":"#9898A0",
-        "text_dim":      "#686870",
-        "border":        "#353538",
-        "divider":       "#2A2A2E",
-        "white":         "#FFFFFF",
+        "icon":"🌙","bg":"#1A1A1E","card":"#252528","card_hover":"#2E2E33",
+        "surface":"#1E1E22","topbar":"#16161A","sidebar_bg":"#121215",
+        "primary":"#4A9EFF","primary_dim":"#2A5A8F","success":"#4CAF50",
+        "danger":"#EF5350","warning":"#FF9800","text":"#E8E8ED",
+        "text_secondary":"#9898A0","text_dim":"#686870","border":"#353538",
+        "divider":"#2A2A2E","white":"#FFFFFF",
     },
     "极简白": {
-        "name": "极简白",
-        "icon": "☀️",
-        "bg":            "#F2F2F7",
-        "card":          "#FFFFFF",
-        "card_hover":    "#F5F5FA",
-        "surface":       "#FAFAFA",
-        "topbar":        "#FFFFFF",
-        "sidebar_bg":    "#E8E8ED",
-        "primary":       "#007AFF",
-        "primary_dim":   "#B3D9FF",
-        "success":       "#34C759",
-        "danger":        "#FF3B30",
-        "warning":       "#FF9500",
-        "text":          "#1C1C1E",
-        "text_secondary":"#6E6E73",
-        "text_dim":      "#AEAEB2",
-        "border":        "#D1D1D6",
-        "divider":       "#E5E5EA",
-        "white":         "#FFFFFF",
+        "icon":"☀️","bg":"#F2F2F7","card":"#FFFFFF","card_hover":"#F5F5FA",
+        "surface":"#FAFAFA","topbar":"#FFFFFF","sidebar_bg":"#E8E8ED",
+        "primary":"#007AFF","primary_dim":"#B3D9FF","success":"#34C759",
+        "danger":"#FF3B30","warning":"#FF9500","text":"#1C1C1E",
+        "text_secondary":"#6E6E73","text_dim":"#AEAEB2","border":"#D1D1D6",
+        "divider":"#E5E5EA","white":"#FFFFFF",
     },
     "森林绿": {
-        "name": "森林绿",
-        "icon": "🌿",
-        "bg":            "#1B1E1C",
-        "card":          "#252826",
-        "card_hover":    "#2E322F",
-        "surface":       "#1E211F",
-        "topbar":        "#161917",
-        "sidebar_bg":    "#121413",
-        "primary":       "#4CAF50",
-        "primary_dim":   "#2E5A30",
-        "success":       "#66BB6A",
-        "danger":        "#EF5350",
-        "warning":       "#FFB74D",
-        "text":          "#E8EDE8",
-        "text_secondary":"#98A098",
-        "text_dim":      "#687068",
-        "border":        "#353835",
-        "divider":       "#2A2E2A",
-        "white":         "#FFFFFF",
+        "icon":"🌿","bg":"#1B1E1C","card":"#252826","card_hover":"#2E322F",
+        "surface":"#1E211F","topbar":"#161917","sidebar_bg":"#121413",
+        "primary":"#4CAF50","primary_dim":"#2E5A30","success":"#66BB6A",
+        "danger":"#EF5350","warning":"#FFB74D","text":"#E8EDE8",
+        "text_secondary":"#98A098","text_dim":"#687068","border":"#353835",
+        "divider":"#2A2E2A","white":"#FFFFFF",
     },
     "海洋蓝": {
-        "name": "海洋蓝",
-        "icon": "🌊",
-        "bg":            "#1A1D24",
-        "card":          "#22262E",
-        "card_hover":    "#2B3039",
-        "surface":       "#1C2027",
-        "topbar":        "#14171D",
-        "sidebar_bg":    "#101217",
-        "primary":       "#5C9CEF",
-        "primary_dim":   "#2A4A7F",
-        "success":       "#4FC3F7",
-        "danger":        "#EF5350",
-        "warning":       "#FFB74D",
-        "text":          "#E8ECF2",
-        "text_secondary":"#98A4B4",
-        "text_dim":      "#687484",
-        "border":        "#353A44",
-        "divider":       "#2A2F38",
-        "white":         "#FFFFFF",
+        "icon":"🌊","bg":"#1A1D24","card":"#22262E","card_hover":"#2B3039",
+        "surface":"#1C2027","topbar":"#14171D","sidebar_bg":"#101217",
+        "primary":"#5C9CEF","primary_dim":"#2A4A7F","success":"#4FC3F7",
+        "danger":"#EF5350","warning":"#FFB74D","text":"#E8ECF2",
+        "text_secondary":"#98A4B4","text_dim":"#687484","border":"#353A44",
+        "divider":"#2A2F38","white":"#FFFFFF",
     },
     "暖橙色": {
-        "name": "暖橙色",
-        "icon": "🌅",
-        "bg":            "#1E1B1A",
-        "card":          "#282422",
-        "card_hover":    "#332E2B",
-        "surface":       "#211D1C",
-        "topbar":        "#191615",
-        "sidebar_bg":    "#141110",
-        "primary":       "#FF9800",
-        "primary_dim":   "#7F4D00",
-        "success":       "#FFB74D",
-        "danger":        "#EF5350",
-        "warning":       "#FFC107",
-        "text":          "#EDE8E4",
-        "text_secondary":"#A09890",
-        "text_dim":      "#706860",
-        "border":        "#383530",
-        "divider":       "#2E2A26",
-        "white":         "#FFFFFF",
+        "icon":"🌅","bg":"#1E1B1A","card":"#282422","card_hover":"#332E2B",
+        "surface":"#211D1C","topbar":"#191615","sidebar_bg":"#141110",
+        "primary":"#FF9800","primary_dim":"#7F4D00","success":"#FFB74D",
+        "danger":"#EF5350","warning":"#FFC107","text":"#EDE8E4",
+        "text_secondary":"#A09890","text_dim":"#706860","border":"#383530",
+        "divider":"#2E2A26","white":"#FFFFFF",
     },
 }
-
 DEFAULT_THEME = "暗夜黑"
 C = THEMES[DEFAULT_THEME]
 
-FONT_TITLE   = ("Microsoft YaHei UI", 20, "bold")
-FONT_HEADER  = ("Microsoft YaHei UI", 15, "bold")
-FONT_BODY    = ("Microsoft YaHei UI", 11)
-FONT_SMALL   = ("Microsoft YaHei UI", 9)
-FONT_BTN     = ("Microsoft YaHei UI", 11)
-FONT_NUM     = ("Segoe UI", 11)
+FONT_TITLE  = ("Microsoft YaHei UI", 20, "bold")
+FONT_HEADER = ("Microsoft YaHei UI", 15, "bold")
+FONT_BODY   = ("Microsoft YaHei UI", 11)
+FONT_SMALL  = ("Microsoft YaHei UI", 9)
+FONT_BTN    = ("Microsoft YaHei UI", 11)
 
 
 # ============================================================
-# 工具函数
+# 工具
 # ============================================================
 def get_app_dir():
     if getattr(sys, 'frozen', False):
@@ -147,10 +78,8 @@ def gen_id():
 
 def fmt_date(s):
     if not s: return ""
-    try:
-        return datetime.strptime(s, "%Y-%m-%d").strftime("%Y年%m月%d日")
-    except:
-        return s
+    try: return datetime.strptime(s,"%Y-%m-%d").strftime("%Y年%m月%d日")
+    except: return s
 
 def remaining_months(start_str, total_months):
     if not start_str or total_months <= 0: return -1
@@ -160,20 +89,53 @@ def remaining_months(start_str, total_months):
         now = datetime.now()
         if now > end: return 0
         return max(0, (end - now).days // 30)
-    except:
-        return -1
+    except: return -1
 
 def end_date_str(start_str, total_months):
     if not start_str or total_months <= 0: return ""
-    try:
-        return (datetime.strptime(start_str, "%Y-%m-%d") +
-                timedelta(days=total_months * 30)).strftime("%Y-%m-%d")
-    except:
-        return ""
+    try: return (datetime.strptime(start_str,"%Y-%m-%d") +
+                 timedelta(days=total_months*30)).strftime("%Y-%m-%d")
+    except: return ""
+
+def rent_is_paid(rent_paid, month_key):
+    """安全获取某月是否已付（兼容 bool 和 dict 格式）"""
+    v = rent_paid.get(month_key, False)
+    if isinstance(v, dict): return v.get("paid", False)
+    return bool(v)
+
+def rent_amount(rent_paid, month_key):
+    """安全获取某月租金金额"""
+    v = rent_paid.get(month_key, False)
+    if isinstance(v, dict): return v.get("amount", 0)
+    return 0
+
+def set_rent(rent_paid, month_key, paid=None, amount=None):
+    """设置某月租金（自动迁移格式）"""
+    old = rent_paid.get(month_key, False)
+    if isinstance(old, dict):
+        entry = dict(old)
+    else:
+        entry = {"paid": bool(old), "amount": 0}
+    if paid is not None: entry["paid"] = paid
+    if amount is not None: entry["amount"] = amount
+    rent_paid[month_key] = entry
+
+def migrate_rent_paid(rent_paid):
+    """迁移旧格式 rent_paid（bool → {paid, amount}）"""
+    if not rent_paid: return
+    for k, v in list(rent_paid.items()):
+        if not isinstance(v, dict):
+            rent_paid[k] = {"paid": bool(v), "amount": 0}
+
+def migrate_all_data(data):
+    """迁移所有房间的旧数据格式"""
+    for b in data.get("buildings", []):
+        for r in b.get("rooms", []):
+            migrate_rent_paid(r.get("rent_paid", {}))
 
 
 # ============================================================
-# 组件：圆角按钮
+# 组件
 # ============================================================
 class RoundedBtn(tk.Canvas):
     def __init__(self, parent, text, command=None, width=120, height=36,
@@ -185,38 +147,33 @@ class RoundedBtn(tk.Canvas):
                          bg=canvas_bg, highlightthickness=0, **kw)
         self.btn_bg, self.fg, self.cmd, self.txt = bg, fg, command, text
         self.w, self.h, self.font = width, height, font
-        self._pressed = False
-        self.bind("<Button-1>", self._down)
-        self.bind("<Enter>", self._over)
-        self.bind("<Leave>", self._out)
-        self.bind("<ButtonRelease-1>", self._up)
-        self._render()
+        self._p = False
+        for e, cb in [("<B1>",self._d),("<Enter>",self._o),
+                      ("<Leave>",self._l),("<B1-Release>",self._u)]:
+            self.bind(e, cb)
+        self._draw()
 
-    def _render(self, hover=False, pressed=False):
+    def _draw(self, hover=False, pressed=False):
         self.delete("all")
         c = self.btn_bg
         if pressed: c = self._dark(c, 0.15)
         elif hover: c = self._dark(c, 0.08)
-        self._rr(0, 0, self.w, self.h, 8, fill=c, outline=c)
+        self._rr(0,0,self.w,self.h,8,fill=c,outline=c)
         self.create_text(self.w//2, self.h//2, text=self.txt,
                          fill=self.fg, font=self.font)
-
-    def _rr(self, x1, y1, x2, y2, r, **kw):
-        pts = [x1+r,y1, x2-r,y1, x2,y1, x2,y1+r,
-               x2,y2-r, x2,y2, x2-r,y2, x1+r,y2, x1,y2,
-               x1,y2-r, x1,y1+r, x1,y1]
-        return self.create_polygon(pts, smooth=True, **kw)
-
+    def _rr(self,x1,y1,x2,y2,r,**kw):
+        return self.create_polygon([x1+r,y1,x2-r,y1,x2,y1,x2,y1+r,
+                x2,y2-r,x2,y2,x2-r,y2,x1+r,y2,x1,y2,x1,y2-r,x1,y1+r,x1,y1],
+                smooth=True,**kw)
     def _dark(self, hx, f):
-        hx = hx.lstrip("#")
+        hx=hx.lstrip("#")
         return f"#{max(0,min(255,int(int(hx[i:i+2],16)*(1-f)))):02x}{max(0,min(255,int(int(hx[2:4],16)*(1-f)))):02x}{max(0,min(255,int(int(hx[4:6],16)*(1-f)))):02x}"
-
-    def _down(self, e): self._pressed = True; self._render(pressed=True)
-    def _up(self, e):
-        if self._pressed and self.cmd: self.cmd()
-        self._pressed = False; self._render()
-    def _over(self, e): self._render(hover=True)
-    def _out(self, e): self._pressed = False; self._render()
+    def _d(self,e): self._p=True; self._draw(pressed=True)
+    def _u(self,e):
+        if self._p and self.cmd: self.cmd()
+        self._p=False; self._draw()
+    def _o(self,e): self._draw(hover=True)
+    def _l(self,e): self._p=False; self._draw()
 
 
 class BackBtn(tk.Canvas):
@@ -225,24 +182,21 @@ class BackBtn(tk.Canvas):
         super().__init__(parent, width=38, height=38,
                          bg=bg, highlightthickness=0, **kw)
         self.cmd = command
-        self.bind("<Button-1>", lambda e: self.cmd())
-        self.bind("<Enter>", self._over)
-        self.bind("<Leave>", self._out)
-        self._render(False)
-
-    def _render(self, h):
+        self.bind("<B1>", lambda e: self.cmd())
+        self.bind("<Enter>", self._o); self.bind("<Leave>", self._l)
+        self._draw(False)
+    def _draw(self, h):
         self.delete("all")
         bg = C["border"] if h else C["card"]
         self._rr(0,0,38,38,8,fill=bg,outline=bg)
         self.create_line(22,11,13,19,22,27,fill=C["primary"],
                          width=2.5,capstyle=tk.ROUND,joinstyle=tk.ROUND)
-
-    def _rr(self, x1,y1,x2,y2,r,**kw):
-        pts=[x1+r,y1,x2-r,y1,x2,y1,x2,y1+r,x2,y2-r,x2,y2,x2-r,y2,
-             x1+r,y2,x1,y2,x1,y2-r,x1,y1+r,x1,y1]
-        return self.create_polygon(pts,smooth=True,**kw)
-    def _over(self,e): self._render(True)
-    def _out(self,e): self._render(False)
+    def _rr(self,x1,y1,x2,y2,r,**kw):
+        return self.create_polygon([x1+r,y1,x2-r,y1,x2,y1,x2,y1+r,
+                x2,y2-r,x2,y2,x2-r,y2,x1+r,y2,x1,y2,x1,y2-r,x1,y1+r,x1,y1],
+                smooth=True,**kw)
+    def _o(self,e): self._draw(True)
+    def _l(self,e): self._draw(False)
 
 
 def make_entry(parent, var=None, width=None, **kw):
@@ -256,7 +210,7 @@ def make_entry(parent, var=None, width=None, **kw):
 
 
 # ============================================================
-# 数据存储
+# 数据
 # ============================================================
 class DataStore:
     def __init__(self):
@@ -271,9 +225,10 @@ class DataStore:
                     self.data = json.load(f)
             except:
                 self.data = {"buildings": [], "theme": DEFAULT_THEME}
-        # 确保 theme 字段存在
         if "theme" not in self.data:
             self.data["theme"] = DEFAULT_THEME
+        # 迁移旧数据格式
+        migrate_all_data(self.data)
 
     def save(self):
         with open(self.path, "w", encoding="utf-8") as f:
@@ -289,8 +244,7 @@ class DataStore:
 
     @theme.setter
     def theme(self, val):
-        self.data["theme"] = val
-        self.save()
+        self.data["theme"] = val; self.save()
 
     def add(self, b):
         self.data.setdefault("buildings", []).append(b); self.save()
@@ -313,18 +267,16 @@ class DataStore:
 
 
 # ============================================================
-# 对话框：添加/编辑楼房
+# 对话框：编辑楼房（含楼层标签编辑）
 # ============================================================
 class BuildingDialog(tk.Toplevel):
     def __init__(self, parent, on_save, building=None):
         super().__init__(parent)
-        self.cb = on_save
-        self.building = building
-        self.result = None
+        self.cb = on_save; self.building = building; self.result = None
         is_edit = building is not None
 
         self.title("编辑楼房" if is_edit else "添加楼房")
-        self.geometry("440x380")
+        self.geometry("500x580")
         self.resizable(False, False)
         self.configure(bg=C["bg"])
         self.transient(parent); self.grab_set()
@@ -333,49 +285,121 @@ class BuildingDialog(tk.Toplevel):
 
     def _center(self, p):
         self.update_idletasks()
-        x = p.winfo_rootx() + (p.winfo_width()-440)//2
-        y = p.winfo_rooty() + (p.winfo_height()-380)//2
+        x = p.winfo_rootx() + (p.winfo_width()-500)//2
+        y = p.winfo_rooty() + (p.winfo_height()-580)//2
         self.geometry(f"+{x}+{y}")
 
     def _ui(self):
-        tk.Label(self, text="编辑楼房信息" if self.building else "添加新楼房",
+        # 可滚动内容
+        cv = tk.Canvas(self, bg=C["bg"], highlightthickness=0)
+        sb = tk.Scrollbar(self, orient=tk.VERTICAL, command=cv.yview)
+        ct = tk.Frame(cv, bg=C["bg"])
+        ct.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cw = cv.create_window((0,0), window=ct, anchor=tk.NW, width=500)
+        cv.configure(yscrollcommand=sb.set)
+        cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
+        cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        tk.Label(ct, text="编辑楼房信息" if self.building else "添加新楼房",
                  font=FONT_TITLE, fg=C["text"], bg=C["bg"]).pack(pady=(20,14))
 
-        tk.Label(self, text="楼房名称", font=FONT_BODY,
+        # 名称
+        tk.Label(ct, text="楼房名称", font=FONT_BODY,
                  fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(8,2))
         self.name_var = tk.StringVar(value=self.building["name"] if self.building else "")
-        make_entry(self, self.name_var).pack(fill=tk.X, padx=24, ipady=8)
+        make_entry(ct, self.name_var).pack(fill=tk.X, padx=24, ipady=8)
 
-        tk.Label(self, text="层数", font=FONT_BODY,
+        # 层数
+        tk.Label(ct, text="层数", font=FONT_BODY,
                  fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(14,2))
-        f1 = tk.Frame(self, bg=C["bg"]); f1.pack(fill=tk.X, padx=24)
+        f1 = tk.Frame(ct, bg=C["bg"]); f1.pack(fill=tk.X, padx=24)
         self.floors_var = tk.IntVar(value=self.building["floors"] if self.building else 5)
         tk.Scale(f1, from_=1, to=30, orient=tk.HORIZONTAL,
                  variable=self.floors_var, bg=C["bg"],
                  troughcolor=C["border"], activebackground=C["primary"],
-                 highlightthickness=0, length=360, fg=C["text"],
+                 highlightthickness=0, length=420, fg=C["text"],
                  font=FONT_SMALL).pack(side=tk.LEFT)
         tk.Label(f1, textvariable=self.floors_var, font=FONT_BODY,
                  fg=C["primary"], bg=C["bg"], width=3).pack(side=tk.RIGHT)
 
-        tk.Label(self, text="每层户数", font=FONT_BODY,
+        # 每层户数
+        tk.Label(ct, text="每层户数", font=FONT_BODY,
                  fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(14,2))
-        f2 = tk.Frame(self, bg=C["bg"]); f2.pack(fill=tk.X, padx=24)
+        f2 = tk.Frame(ct, bg=C["bg"]); f2.pack(fill=tk.X, padx=24)
         self.rooms_var = tk.IntVar(value=self.building["rooms_per_floor"] if self.building else 4)
         tk.Scale(f2, from_=1, to=10, orient=tk.HORIZONTAL,
                  variable=self.rooms_var, bg=C["bg"],
                  troughcolor=C["border"], activebackground=C["primary"],
-                 highlightthickness=0, length=360, fg=C["text"],
+                 highlightthickness=0, length=420, fg=C["text"],
                  font=FONT_SMALL).pack(side=tk.LEFT)
         tk.Label(f2, textvariable=self.rooms_var, font=FONT_BODY,
                  fg=C["primary"], bg=C["bg"], width=3).pack(side=tk.RIGHT)
 
-        bf = tk.Frame(self, bg=C["bg"]); bf.pack(pady=20)
+        # ---- 修改楼层号 ----
+        self._floor_labels_warn = tk.Label(ct, text="",
+                                           font=FONT_SMALL, fg=C["text_secondary"],
+                                           bg=C["bg"])
+        # 先声明，build 时再 pack
+        self._floor_labels_frame = tk.Frame(ct, bg=C["bg"])
+
+        if self.building:
+            tk.Label(ct, text="🏷️ 修改楼层号", font=FONT_HEADER,
+                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(18,4))
+            tk.Label(ct, text="可为每层设置自定义名称（留空则使用默认编号）",
+                     font=FONT_SMALL, fg=C["text_secondary"],
+                     bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(0,6))
+
+            self._floor_labels_frame.pack(fill=tk.X, padx=20, pady=4)
+            self._floor_entries = {}
+            self._build_floor_label_entries()
+        else:
+            # 新建时不需要
+            self._floor_labels_warn.pack(pady=(10,0))
+            self._floor_labels_warn.configure(text="（新建后可在编辑中修改楼层号）")
+
+        # 按钮
+        bf = tk.Frame(self, bg=C["bg"]); bf.pack(pady=16)
         RoundedBtn(bf, "取消", command=self.destroy,
                    bg=C["border"], fg=C["text"], width=100, height=38,
                    canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
         RoundedBtn(bf, "保存", command=self._save, width=100, height=38,
                    canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
+
+        # 监听层数变化，刷新标签输入
+        self.floors_var.trace_add("write", lambda *a: self._on_floors_change())
+
+    def _build_floor_label_entries(self):
+        for w in self._floor_labels_frame.winfo_children():
+            w.destroy()
+        self._floor_entries.clear()
+
+        floors = self.floors_var.get()
+        old_labels = self.building.get("floor_labels", {}) if self.building else {}
+
+        for fn in range(1, floors+1):
+            row = tk.Frame(self._floor_labels_frame, bg=C["bg"])
+            row.pack(fill=tk.X, pady=2)
+
+            tk.Label(row, text=f"第{fn}层 →", font=FONT_SMALL,
+                     fg=C["text_secondary"], bg=C["bg"], width=7, anchor=tk.E).pack(
+                side=tk.LEFT, padx=(0, 6))
+
+            var = tk.StringVar(value=old_labels.get(str(fn), ""))
+            e = tk.Entry(row, textvariable=var, font=FONT_SMALL,
+                         relief=tk.FLAT, bd=0, bg=C["card"], fg=C["text"],
+                         insertbackground=C["primary"], width=18,
+                         highlightbackground=C["border"],
+                         highlightcolor=C["primary"], highlightthickness=1)
+            e.pack(side=tk.LEFT, ipady=5)
+            tk.Label(row, text="（留空=默认）", font=("Microsoft YaHei UI", 7),
+                     fg=C["text_dim"], bg=C["bg"]).pack(side=tk.LEFT, padx=4)
+
+            self._floor_entries[fn] = var
+
+    def _on_floors_change(self):
+        if self.building and hasattr(self, '_floor_entries'):
+            self._build_floor_label_entries()
 
     def _save(self):
         name = self.name_var.get().strip()
@@ -383,27 +407,38 @@ class BuildingDialog(tk.Toplevel):
             messagebox.showwarning("提示", "请输入楼房名称", parent=self); return
         floors, rpf = self.floors_var.get(), self.rooms_var.get()
 
+        # 收集楼层标签
+        floor_labels = {}
+        if hasattr(self, '_floor_entries'):
+            for fn, var in self._floor_entries.items():
+                val = var.get().strip()
+                if val:
+                    floor_labels[str(fn)] = val
+
         if self.building:
-            ex_rooms = self.building.get("rooms", [])
+            ex = self.building.get("rooms", [])
             rooms = []
             for f in range(1, floors+1):
                 for r in range(1, rpf+1):
                     rid = f"{f:02d}{r:02d}"
-                    found = next((er for er in ex_rooms if er["id"]==rid), None)
+                    found = next((er for er in ex if er["id"]==rid), None)
                     rooms.append(found if found else DataStore.new_room(rid))
             self.building.update(name=name, floors=floors,
-                                 rooms_per_floor=rpf, rooms=rooms)
+                                 rooms_per_floor=rpf, rooms=rooms,
+                                 floor_labels=floor_labels)
             self.result = self.building
         else:
             rooms = [DataStore.new_room(f"{f:02d}{r:02d}")
                      for f in range(1, floors+1) for r in range(1, rpf+1)]
             self.result = {"id": gen_id(), "name": name, "floors": floors,
-                           "rooms_per_floor": rpf, "rooms": rooms}
+                           "rooms_per_floor": rpf, "rooms": rooms,
+                           "floor_labels": floor_labels}
+
         self.cb(self.result); self.destroy()
 
 
 # ============================================================
-# 对话框：房间详情
+# 对话框：房间详情（含租金金额编辑）
 # ============================================================
 class RoomDialog(tk.Toplevel):
     def __init__(self, parent, room, bld_name, on_save, on_transfer=None):
@@ -412,7 +447,7 @@ class RoomDialog(tk.Toplevel):
         self._on_save = on_save; self._on_transfer = on_transfer
 
         self.title(f"{bld_name} · {room['name']}")
-        self.geometry("560x700")
+        self.geometry("560x740")
         self.resizable(False, False)
         self.configure(bg=C["bg"])
         self.transient(parent); self.grab_set()
@@ -422,7 +457,7 @@ class RoomDialog(tk.Toplevel):
     def _center(self, p):
         self.update_idletasks()
         x = p.winfo_rootx()+(p.winfo_width()-560)//2
-        y = p.winfo_rooty()+(p.winfo_height()-700)//2
+        y = p.winfo_rooty()+(p.winfo_height()-740)//2
         self.geometry(f"+{x}+{y}")
 
     def _ui(self):
@@ -463,6 +498,7 @@ class RoomDialog(tk.Toplevel):
         self.tenant_var = tk.StringVar()
         make_entry(self.ct, self.tenant_var).pack(fill=tk.X, padx=24, ipady=8)
 
+        # 租期
         tk.Label(self.ct, text="📅 租期设置", font=FONT_HEADER,
                  fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(18,4))
         lf = tk.Frame(self.ct, bg=C["card"],
@@ -494,14 +530,36 @@ class RoomDialog(tk.Toplevel):
                                    fg=C["text_secondary"], bg=C["card"], justify=tk.LEFT)
         self.lease_info.pack(anchor=tk.W, pady=(8,0))
 
+        # 每月租金（带金额）
         tk.Label(self.ct, text="💰 每月租金", font=FONT_HEADER,
                  fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(18,4))
         rf = tk.Frame(self.ct, bg=C["card"],
                       highlightbackground=C["border"], highlightthickness=1)
         rf.pack(fill=tk.X, padx=24, pady=4)
         ri = tk.Frame(rf, bg=C["card"]); ri.pack(fill=tk.X, padx=14, pady=14)
+
+        # 默认月租金设置
+        default_row = tk.Frame(ri, bg=C["card"])
+        default_row.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(default_row, text="默认月租:", font=FONT_SMALL,
+                 fg=C["text_secondary"], bg=C["card"]).pack(side=tk.LEFT)
+        self.default_amount_var = tk.StringVar(value="")
+        tk.Entry(default_row, textvariable=self.default_amount_var,
+                 font=FONT_SMALL, relief=tk.FLAT, bd=0,
+                 bg=C["bg"], fg=C["text"], width=10,
+                 insertbackground=C["primary"],
+                 highlightbackground=C["border"],
+                 highlightcolor=C["primary"],
+                 highlightthickness=1).pack(side=tk.LEFT, padx=6, ipady=3)
+        tk.Label(default_row, text="元", font=FONT_SMALL,
+                 fg=C["text_secondary"], bg=C["card"]).pack(side=tk.LEFT)
+        RoundedBtn(default_row, "批量设置", command=self._apply_default_amount,
+                   bg=C["primary_dim"], fg=C["white"], font=FONT_SMALL,
+                   width=70, height=26, canvas_bg=C["card"]).pack(side=tk.LEFT, padx=10)
+
         self.rent_grid = tk.Frame(ri, bg=C["card"]); self.rent_grid.pack(fill=tk.X)
 
+        # 注解
         tk.Label(self.ct, text="📝 租客注解", font=FONT_HEADER,
                  fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(18,4))
         self.notes = tk.Text(self.ct, height=4, font=FONT_BODY, relief=tk.FLAT,
@@ -520,6 +578,20 @@ class RoomDialog(tk.Toplevel):
                                        canvas_bg=C["bg"])
         RoundedBtn(bf, "💾 保存", command=self._save, width=90, height=38,
                    canvas_bg=C["bg"]).pack(side=tk.RIGHT, padx=4)
+
+    def _apply_default_amount(self):
+        """将默认金额应用到所有月份"""
+        try:
+            amt = int(self.default_amount_var.get().strip())
+        except ValueError:
+            messagebox.showwarning("提示", "请输入有效金额", parent=self); return
+        months = self.lease_months_var.get()
+        rp = self.room.setdefault("rent_paid", {})
+        for m in range(1, months+1):
+            k = str(m)
+            old_paid = rent_is_paid(rp, k)
+            set_rent(rp, k, paid=old_paid, amount=amt)
+        self._refresh_rent()
 
     def _toggle_occ(self):
         occ = self.occ_var.get()
@@ -549,8 +621,10 @@ class RoomDialog(tk.Toplevel):
         self.lease_months_var.set(self.room.get("lease_months",1))
         self.notes.insert("1.0", self.room.get("notes",""))
         self._toggle_occ(); self._refresh_rent(); self._update_lease()
-        self.lease_months_var.trace_add("write", lambda *a: (self._update_lease(), self._refresh_rent()))
-        self.lease_start_var.trace_add("write", lambda *a: self._update_lease())
+        self.lease_months_var.trace_add("write",
+            lambda *a: (self._update_lease(), self._refresh_rent()))
+        self.lease_start_var.trace_add("write",
+            lambda *a: self._update_lease())
 
     def _update_lease(self):
         s, m = self.lease_start_var.get().strip(), self.lease_months_var.get()
@@ -566,25 +640,71 @@ class RoomDialog(tk.Toplevel):
     def _refresh_rent(self):
         for w in self.rent_grid.winfo_children(): w.destroy()
         months = self.lease_months_var.get()
-        paid = self.room.get("rent_paid",{})
-        cols = 4
+        rp = self.room.get("rent_paid", {})
+
         for i in range(months):
-            m = i+1; k = str(m); is_p = paid.get(k, False)
+            m = i + 1; k = str(m)
+            is_p = rent_is_paid(rp, k)
+            amt = rent_amount(rp, k)
+
+            # 整行 frame
+            row = tk.Frame(self.rent_grid, bg=C["card"])
+            row.pack(fill=tk.X, pady=2)
+
+            # 支付状态按钮
             bg = C["success"] if is_p else C["border"]
             fg = C["white"] if is_p else C["text"]
             txt = f"✓ 第{m}月" if is_p else f"第{m}月"
-            btn = tk.Button(self.rent_grid, text=txt, font=FONT_SMALL,
-                            bg=bg, fg=fg, relief=tk.FLAT, bd=0,
+            btn = tk.Button(row, text=txt, font=FONT_SMALL,
+                            bg=bg, fg=fg, relief=tk.FLAT, bd=0, width=10,
                             activebackground=C["primary"], cursor="hand2",
                             command=lambda key=k: self._tog_rent(key))
-            btn.grid(row=i//cols, column=i%cols, padx=3, pady=3, sticky="ew")
-            self.rent_grid.grid_columnconfigure(i%cols, weight=1)
+            btn.pack(side=tk.LEFT, padx=(0, 8))
+
+            # 金额标签
+            amt_var = tk.StringVar(value=str(amt) if amt > 0 else "")
+            amt_entry = tk.Entry(row, textvariable=amt_var,
+                                 font=FONT_SMALL, relief=tk.FLAT, bd=0,
+                                 bg=C["bg"], fg=C["text"], width=8,
+                                 insertbackground=C["primary"],
+                                 highlightbackground=C["border"],
+                                 highlightcolor=C["primary"],
+                                 highlightthickness=1)
+            amt_entry.pack(side=tk.LEFT, ipady=2)
+            tk.Label(row, text="元", font=FONT_SMALL,
+                     fg=C["text_secondary"], bg=C["card"]).pack(side=tk.LEFT)
+
+            # 保存引用以便后续读取
+            amt_entry._month_key = k
+            amt_entry._amt_var = amt_var
+
+        # 存储引用
+        self._rent_entries = [
+            w for w in self.rent_grid.winfo_children()
+            if isinstance(w, tk.Frame)
+        ]
 
     def _tog_rent(self, key):
-        paid = self.room.setdefault("rent_paid",{})
-        paid[key] = not paid.get(key, False); self._refresh_rent()
+        rp = self.room.setdefault("rent_paid", {})
+        old_paid = rent_is_paid(rp, key)
+        old_amt = rent_amount(rp, key)
+        set_rent(rp, key, paid=not old_paid, amount=old_amt)
+        self._refresh_rent()
 
     def _apply(self):
+        # 先保存租金金额输入
+        rp = self.room.setdefault("rent_paid", {})
+        for row in self.rent_grid.winfo_children():
+            if isinstance(row, tk.Frame):
+                for child in row.winfo_children():
+                    if isinstance(child, tk.Entry) and hasattr(child, '_month_key'):
+                        try:
+                            amt = int(child.get().strip()) if child.get().strip() else 0
+                        except ValueError:
+                            amt = 0
+                        old_paid = rent_is_paid(rp, child._month_key)
+                        set_rent(rp, child._month_key, paid=old_paid, amount=amt)
+
         self.room["name"] = self.name_var.get().strip() or self.room["id"]
         self.room["occupied"] = self.occ_var.get()
         self.room["tenant_name"] = self.tenant_var.get().strip()
@@ -605,14 +725,13 @@ class RoomDialog(tk.Toplevel):
 
 
 # ============================================================
-# 对话框：转移
+# 转移对话框
 # ============================================================
 class TransferDialog(tk.Toplevel):
     def __init__(self, parent, buildings, cur_bid, cur_rid, cb):
         super().__init__(parent)
         self.buildings = buildings; self.cur_bid = cur_bid
         self.cur_rid = cur_rid; self._cb = cb; self._cur_bld = None
-
         self.title("转移租客"); self.geometry("440x400")
         self.resizable(False,False); self.configure(bg=C["bg"])
         self.transient(parent); self.grab_set()
@@ -627,7 +746,6 @@ class TransferDialog(tk.Toplevel):
                  fg=C["text"], bg=C["bg"]).pack(pady=(20,4))
         tk.Label(self, text="选择目标空房屋", font=FONT_SMALL,
                  fg=C["text_secondary"], bg=C["bg"]).pack(pady=(0,12))
-
         tk.Label(self, text="目标楼房", font=FONT_BODY,
                  fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=4)
         self.bld_var = tk.StringVar()
@@ -637,17 +755,14 @@ class TransferDialog(tk.Toplevel):
         cb.pack(fill=tk.X, padx=24, ipady=4)
         if names: cb.current(0)
         cb.bind("<<ComboboxSelected>>", self._refresh)
-
         tk.Label(self, text="目标房屋（仅空置）", font=FONT_BODY,
                  fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(12,4))
         lf = tk.Frame(self, bg=C["border"]); lf.pack(fill=tk.BOTH, expand=True, padx=24, pady=4)
         self.lb = tk.Listbox(lf, font=FONT_BODY, relief=tk.FLAT, bd=0,
                              bg=C["card"], fg=C["text"],
                              selectbackground=C["primary"],
-                             selectforeground=C["white"],
-                             activestyle="none", height=8)
+                             selectforeground=C["white"], activestyle="none", height=8)
         self.lb.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-
         bf = tk.Frame(self, bg=C["bg"]); bf.pack(pady=14)
         RoundedBtn(bf, "取消", command=self.destroy,
                    bg=C["border"], fg=C["text"], width=100, height=36,
@@ -702,7 +817,6 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._close)
 
     def _apply_theme(self, theme_name):
-        """应用主题"""
         global C
         C = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
         self.configure(bg=C["bg"])
@@ -720,27 +834,21 @@ class App(tk.Tk):
         else:
             self._show_home()
 
-    # ================================================================
-    # 主页：楼房列表
-    # ================================================================
+    # ====== 主页 ======
     def _show_home(self):
         self._clear(); self.nav = [self._show_home]
 
-        # 侧边栏
         sb = tk.Frame(self.main, bg=C["sidebar_bg"], width=250)
         sb.pack(side=tk.LEFT, fill=tk.Y); sb.pack_propagate(False)
 
-        # Logo
         lf = tk.Frame(sb, bg=C["sidebar_bg"]); lf.pack(fill=tk.X, pady=(28,18), padx=22)
         tk.Label(lf, text="🏢", font=("Segoe UI Emoji",30), bg=C["sidebar_bg"]).pack(anchor=tk.W)
         tk.Label(lf, text="楼房管理", font=("Microsoft YaHei UI",17,"bold"),
                  fg=C["text"], bg=C["sidebar_bg"]).pack(anchor=tk.W, pady=(4,0))
         tk.Label(lf, text="HOUSE MANAGEMENT", font=("Microsoft YaHei UI",8),
                  fg=C["text_dim"], bg=C["sidebar_bg"]).pack(anchor=tk.W)
-
         tk.Frame(sb, bg=C["divider"], height=1).pack(fill=tk.X, padx=22, pady=10)
 
-        # 统计
         sf = tk.Frame(sb, bg=C["sidebar_bg"]); sf.pack(fill=tk.X, padx=22, pady=8)
         blds = self.dm.buildings
         tr = sum(len(b.get("rooms",[])) for b in blds)
@@ -756,59 +864,39 @@ class App(tk.Tk):
 
         tk.Frame(sb, bg=C["sidebar_bg"]).pack(expand=True)
 
-        # ---- 主题选择器 ----
-        theme_frame = tk.Frame(sb, bg=C["sidebar_bg"])
-        theme_frame.pack(fill=tk.X, padx=18, pady=(0, 10))
-
-        tk.Label(theme_frame, text="🎨 界面风格", font=FONT_SMALL,
+        # 主题选择器
+        tf = tk.Frame(sb, bg=C["sidebar_bg"]); tf.pack(fill=tk.X, padx=18, pady=(0,10))
+        tk.Label(tf, text="🎨 界面风格", font=FONT_SMALL,
                  fg=C["text_secondary"], bg=C["sidebar_bg"]).pack(anchor=tk.W, pady=(0,6))
-
-        # 主题网格按钮
-        theme_grid = tk.Frame(theme_frame, bg=C["sidebar_bg"])
-        theme_grid.pack(fill=tk.X)
-
-        row_frame = None
-        for i, (tname, tinfo) in enumerate(THEMES.items()):
+        tg = tk.Frame(tf, bg=C["sidebar_bg"]); tg.pack(fill=tk.X)
+        rf = None
+        for i, (tn, ti) in enumerate(THEMES.items()):
             if i % 2 == 0:
-                row_frame = tk.Frame(theme_grid, bg=C["sidebar_bg"])
-                row_frame.pack(fill=tk.X, pady=2)
-
-            is_active = (self.dm.theme == tname)
-            border_clr = C["primary"] if is_active else C["border"]
-
-            btn = tk.Frame(row_frame, bg=C["surface"],
-                          highlightbackground=border_clr,
-                          highlightthickness=2 if is_active else 1)
+                rf = tk.Frame(tg, bg=C["sidebar_bg"]); rf.pack(fill=tk.X, pady=2)
+            active = (self.dm.theme == tn)
+            bclr = C["primary"] if active else C["border"]
+            btn = tk.Frame(rf, bg=C["surface"],
+                          highlightbackground=bclr,
+                          highlightthickness=2 if active else 1)
             btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3, pady=2)
-
-            inner = tk.Frame(btn, bg=C["surface"])
-            inner.pack(padx=8, pady=6)
-
-            tk.Label(inner, text=f"{tinfo['icon']} {tname}",
-                     font=FONT_SMALL, fg=C["text"] if is_active else C["text_secondary"],
+            inn = tk.Frame(btn, bg=C["surface"]); inn.pack(padx=8, pady=6)
+            tk.Label(inn, text=f"{ti['icon']} {tn}",
+                     font=FONT_SMALL, fg=C["text"] if active else C["text_secondary"],
                      bg=C["surface"]).pack()
+            sw = tk.Frame(inn, bg=C["surface"]); sw.pack(pady=(4,0))
+            for sc in [ti["primary"], ti["success"], ti["warning"]]:
+                tk.Frame(sw, bg=sc, width=14, height=8).pack(side=tk.LEFT, padx=2)
+            for w in (btn, inn) + tuple(inn.winfo_children()) + tuple(sw.winfo_children()):
+                w.bind("<Button-1>", lambda e, tn=tn: self._switch_theme(tn))
 
-            # 色块预览
-            swatch = tk.Frame(inner, bg=C["surface"])
-            swatch.pack(pady=(4,0))
-            for sw_clr in [tinfo["primary"], tinfo["success"], tinfo["warning"]]:
-                tk.Frame(swatch, bg=sw_clr, width=14, height=8).pack(side=tk.LEFT, padx=2)
-
-            for w in (btn, inner) + tuple(inner.winfo_children()) + tuple(swatch.winfo_children()):
-                w.bind("<Button-1>", lambda e, tn=tname: self._switch_theme(tn))
-
-        # ---- 添加按钮 ----
         RoundedBtn(sb, "＋ 添加楼房", command=self._add_building,
                    bg=C["primary"], width=206, height=42,
                    canvas_bg=C["sidebar_bg"]).pack(pady=(10, 20))
 
-        # 主区域
         ma = tk.Frame(self.main, bg=C["bg"]); ma.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
         hd = tk.Frame(ma, bg=C["bg"]); hd.pack(fill=tk.X, padx=30, pady=(26,10))
         tk.Label(hd, text="我的楼房", font=FONT_TITLE,
                  fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT)
-
         search = make_entry(hd, width=22)
         search.pack(side=tk.RIGHT, ipady=6)
         search.insert(0,"🔍 搜索...")
@@ -824,13 +912,11 @@ class App(tk.Tk):
         cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
         cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scr.pack(side=tk.RIGHT, fill=tk.Y)
-
         search.bind("<KeyRelease>", lambda e: self._refresh_cards(search.get()))
         self._refresh_cards("")
 
-    def _switch_theme(self, theme_name):
-        self._apply_theme(theme_name)
-        self._show_home()
+    def _switch_theme(self, tn):
+        self._apply_theme(tn); self._show_home()
 
     def _add_building(self):
         BuildingDialog(self, lambda b: (self.dm.add(b), self._show_home()))
@@ -841,7 +927,6 @@ class App(tk.Tk):
         ft = filt.lower().strip()
         if ft and ft != "🔍 搜索...":
             blds = [b for b in blds if ft in b["name"].lower()]
-
         if not blds:
             emp = tk.Frame(self.card_frm, bg=C["bg"]); emp.pack(fill=tk.BOTH, expand=True, pady=100)
             tk.Label(emp, text="📭", font=("Segoe UI Emoji",48), bg=C["bg"]).pack()
@@ -850,7 +935,6 @@ class App(tk.Tk):
             tk.Label(emp, text='点击左侧 "＋ 添加楼房" 开始', font=FONT_SMALL,
                      fg=C["text_dim"], bg=C["bg"]).pack()
             return
-
         cols = 2
         for i, b in enumerate(blds):
             if i % cols == 0:
@@ -862,22 +946,18 @@ class App(tk.Tk):
         card = tk.Frame(parent, bg=C["card"],
                         highlightbackground=C["border"], highlightthickness=1)
         inn = tk.Frame(card, bg=C["card"]); inn.pack(fill=tk.X, padx=20, pady=18)
-
         r1 = tk.Frame(inn, bg=C["card"]); r1.pack(fill=tk.X)
         ic = tk.Frame(r1, bg=C["primary_dim"], width=44, height=44)
         ic.pack(side=tk.LEFT, padx=(0,14)); ic.pack_propagate(False)
         tk.Label(ic, text="🏢", font=("Segoe UI Emoji",20), bg=C["primary_dim"]).place(relx=.5, rely=.5, anchor=tk.CENTER)
-
         nf = tk.Frame(r1, bg=C["card"]); nf.pack(side=tk.LEFT)
         tk.Label(nf, text=b["name"], font=FONT_HEADER, fg=C["text"], bg=C["card"]).pack(anchor=tk.W)
-
         bf = tk.Frame(r1, bg=C["card"]); bf.pack(side=tk.RIGHT)
         for txt, clr, cmd in [("✏️", C["primary"], lambda bb=b: self._edit_bld(bb)),
                               ("🗑️", C["danger"], lambda bb=b: self._del_bld(bb))]:
             tk.Button(bf, text=txt, font=FONT_SMALL, relief=tk.FLAT, bd=0,
                       bg=C["card"], fg=clr, activebackground=C["card_hover"],
                       cursor="hand2", command=cmd).pack(side=tk.LEFT, padx=2)
-
         r2 = tk.Frame(inn, bg=C["card"]); r2.pack(fill=tk.X, pady=(10,8))
         fl, rpf = b.get("floors",1), b.get("rooms_per_floor",1)
         total = fl * rpf
@@ -886,15 +966,12 @@ class App(tk.Tk):
         for txt in [f"📐 {fl}层 × {rpf}户", f"🚪 共{total}间", f"👤 入住{occ}间 ({pct}%)"]:
             tk.Label(r2, text=txt, font=FONT_SMALL,
                      fg=C["text_secondary"], bg=C["card"]).pack(side=tk.LEFT, padx=(0,16))
-
         bar = tk.Frame(inn, bg=C["divider"], height=4); bar.pack(fill=tk.X, pady=(2,12))
         if total > 0:
             tk.Frame(bar, bg=C["primary"], height=4).place(x=0,y=0,relwidth=pct/100)
-
         RoundedBtn(inn, "进入管理 →", width=130, height=34,
                    command=lambda bb=b: self._enter_bld(bb),
                    font=FONT_SMALL, canvas_bg=C["card"]).pack(anchor=tk.E)
-
         for w in (card, inn):
             w.bind("<Button-3>", lambda e, bb=b: self._bld_menu(e, bb))
         return card
@@ -908,7 +985,9 @@ class App(tk.Tk):
         m.post(e.x_root, e.y_root)
 
     def _edit_bld(self, b):
-        BuildingDialog(self, lambda upd: (self.dm.update(self.dm.find(b["id"])[0], upd), self._show_home()) if self.dm.find(b["id"])[0]>=0 else None, b)
+        idx = self.dm.find(b["id"])[0]
+        if idx >= 0:
+            BuildingDialog(self, lambda upd: (self.dm.update(idx, upd), self._show_home()), b)
 
     def _del_bld(self, b):
         if messagebox.askyesno("确认删除", f"确定删除「{b['name']}」？\n此操作不可撤销！"):
@@ -919,18 +998,15 @@ class App(tk.Tk):
     def _enter_bld(self, b):
         self._push(lambda bb=b: self._show_room_grid(bb))
 
-    # ================================================================
-    # 房间网格视图（简洁版 - 无走廊）
-    # ================================================================
+    # ====== 房间网格（横向滚动） ======
     def _show_room_grid(self, building):
         self._clear()
         i, building = self.dm.find(building["id"])
         if i < 0: self._back(); return
 
-        # 顶栏
+        # 顶栏（不含编辑楼房按钮 - 3.2）
         bar = tk.Frame(self.main, bg=C["topbar"], height=60)
         bar.pack(fill=tk.X); bar.pack_propagate(False)
-
         BackBtn(bar, self._back, bg=C["topbar"]).pack(side=tk.LEFT, padx=14, pady=11)
         tk.Label(bar, text=building["name"], font=FONT_TITLE,
                  fg=C["text"], bg=C["topbar"]).pack(side=tk.LEFT, pady=14)
@@ -945,23 +1021,17 @@ class App(tk.Tk):
                  font=FONT_SMALL, fg=C["text_secondary"],
                  bg=C["topbar"]).pack(side=tk.LEFT, padx=10, pady=18)
 
-        RoundedBtn(bar, "⚙️ 编辑楼房", command=lambda: self._edit_bld(building),
-                   bg=C["border"], fg=C["text"], font=FONT_SMALL,
-                   width=110, height=32, canvas_bg=C["topbar"]).pack(
-            side=tk.RIGHT, padx=14, pady=14)
-
-        # 滚动区域
+        # 竖向滚动容器
         cv = tk.Canvas(self.main, bg=C["bg"], highlightthickness=0)
-        scr = tk.Scrollbar(self.main, orient=tk.VERTICAL, command=cv.yview)
+        vsb = tk.Scrollbar(self.main, orient=tk.VERTICAL, command=cv.yview)
         ct = tk.Frame(cv, bg=C["bg"])
         ct.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cw = cv.create_window((0,0), window=ct, anchor=tk.NW)
-        cv.configure(yscrollcommand=scr.set)
+        cv.configure(yscrollcommand=vsb.set)
         cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
         cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scr.pack(side=tk.RIGHT, fill=tk.Y)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # 图例
         leg = tk.Frame(ct, bg=C["bg"]); leg.pack(fill=tk.X, padx=30, pady=(16,8))
         tk.Label(leg, text="房间列表", font=FONT_HEADER,
                  fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT)
@@ -970,24 +1040,27 @@ class App(tk.Tk):
             tk.Label(leg, text=txt, font=FONT_SMALL,
                      fg=C["text_secondary"], bg=C["bg"]).pack(side=tk.LEFT)
 
-        # 按楼层显示房间网格
+        floor_labels = building.get("floor_labels", {})
         for fn in range(1, floors+1):
-            self._draw_floor_simple(ct, building, fn, rpf, rooms)
+            self._draw_floor_hscroll(ct, building, fn, rpf, rooms, floor_labels)
 
-    def _draw_floor_simple(self, parent, building, floor_num, rpf, all_rooms):
-        """简洁楼层视图 - 只显示房间网格"""
+    def _draw_floor_hscroll(self, parent, building, floor_num, rpf, all_rooms, floor_labels):
+        """楼层视图 - 带横向滚动条"""
 
         # 楼层标题
         fh = tk.Frame(parent, bg=C["bg"])
         fh.pack(fill=tk.X, padx=30, pady=(16, 8))
 
-        floor_label = tk.Frame(fh, bg=C["primary_dim"], width=60, height=28)
-        floor_label.pack(side=tk.LEFT)
-        floor_label.pack_propagate(False)
-        tk.Label(floor_label, text=str(floor_num), font=("Segoe UI", 14, "bold"),
+        fl_label = tk.Frame(fh, bg=C["primary_dim"], width=60, height=28)
+        fl_label.pack(side=tk.LEFT)
+        fl_label.pack_propagate(False)
+        tk.Label(fl_label, text=str(floor_num), font=("Segoe UI", 14, "bold"),
                  fg=C["white"], bg=C["primary_dim"]).place(relx=.5, rely=.5, anchor=tk.CENTER)
 
-        tk.Label(fh, text=f"第 {floor_num} 层", font=FONT_HEADER,
+        # 使用自定义楼层标签
+        custom_label = floor_labels.get(str(floor_num), "")
+        display_name = custom_label if custom_label else f"第 {floor_num} 层"
+        tk.Label(fh, text=display_name, font=FONT_HEADER,
                  fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT, padx=10)
 
         f_rooms = [r for r in all_rooms if r["id"].startswith(f"{floor_num:02d}")]
@@ -995,19 +1068,37 @@ class App(tk.Tk):
         tk.Label(fh, text=f"入住 {f_occ}/{len(f_rooms)}",
                  font=FONT_SMALL, fg=C["text_secondary"], bg=C["bg"]).pack(side=tk.LEFT, padx=10)
 
-        # 房间网格 - 一行排列
-        grid = tk.Frame(parent, bg=C["bg"])
-        grid.pack(fill=tk.X, padx=26, pady=(0, 6))
+        # ---- 横向滚动容器 ----
+        h_container = tk.Frame(parent, bg=C["bg"])
+        h_container.pack(fill=tk.X, padx=26, pady=(0, 8))
+
+        h_canvas = tk.Canvas(h_container, bg=C["bg"], height=140,
+                             highlightthickness=0)
+        h_scroll = tk.Scrollbar(h_container, orient=tk.HORIZONTAL,
+                                command=h_canvas.xview)
+        grid = tk.Frame(h_canvas, bg=C["bg"])
+        gw = grid.bind("<Configure>",
+                       lambda e: h_canvas.configure(scrollregion=h_canvas.bbox("all")))
+        h_cw = h_canvas.create_window((0,0), window=grid, anchor=tk.NW)
+        h_canvas.configure(xscrollcommand=h_scroll.set)
+
+        h_canvas.pack(side=tk.TOP, fill=tk.X, expand=True)
+        h_scroll.pack(side=tk.TOP, fill=tk.X)
+
+        # 鼠标滚轮水平滚动
+        def _on_hwheel(event):
+            h_canvas.xview_scroll(int(-event.delta/60), "units")
+
+        h_canvas.bind("<Enter>", lambda e: h_canvas.bind_all("<MouseWheel>", _on_hwheel))
+        h_canvas.bind("<Leave>", lambda e: h_canvas.unbind_all("<MouseWheel>"))
 
         for rn in range(1, rpf+1):
             rid = f"{floor_num:02d}{rn:02d}"
             rd = next((r for r in all_rooms if r["id"]==rid), None)
-            if rd is None:
-                rd = DataStore.new_room(rid)
+            if rd is None: rd = DataStore.new_room(rid)
             self._room_card(grid, rd, building).pack(side=tk.LEFT, padx=5, pady=5)
 
     def _room_card(self, parent, room, building):
-        """房间卡片 - 简洁方块"""
         occ = room.get("occupied", False)
         border_color = C["success"] if occ else C["border"]
         w, h = 120, 120
@@ -1015,25 +1106,20 @@ class App(tk.Tk):
         card = tk.Frame(parent, bg=C["card"], width=w, height=h,
                         highlightbackground=border_color, highlightthickness=2)
         card.pack_propagate(False)
-
-        # 顶部色条
         tk.Frame(card, bg=border_color, height=3).pack(fill=tk.X)
 
         inn = tk.Frame(card, bg=C["card"])
         inn.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
-        # 房间号
         tk.Label(inn, text=room["id"], font=("Segoe UI", 15, "bold"),
                  fg=C["primary"] if not occ else C["text"],
                  bg=C["card"]).pack(pady=(6, 0))
 
-        # 自定义名称
         name = room.get("name", room["id"])
         if name != room["id"]:
             tk.Label(inn, text=name, font=FONT_SMALL,
                      fg=C["text_secondary"], bg=C["card"]).pack()
 
-        # 状态
         if occ:
             tk.Label(inn, text="● 已入住", font=("Microsoft YaHei UI", 8),
                      fg=C["success"], bg=C["card"]).pack(pady=(6, 0))
@@ -1051,7 +1137,6 @@ class App(tk.Tk):
             tk.Label(inn, text="○ 空置", font=("Microsoft YaHei UI", 8),
                      fg=C["text_dim"], bg=C["card"]).pack(pady=(6, 0))
 
-        # 点击
         handler = lambda e, r=room, b=building: self._open_room(r, b)
         for wgt in [card, inn] + list(inn.winfo_children()):
             wgt.bind("<Button-1>", handler)
