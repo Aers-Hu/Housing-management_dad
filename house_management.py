@@ -209,6 +209,13 @@ class BackBtn(tk.Canvas):
     def _l(self,e): self._draw(False)
 
 
+def bind_scroll(widget, canvas):
+    """递归为widget及其所有子widget绑定滚轮滚动到指定canvas"""
+    widget.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta/120), "units"))
+    for child in widget.winfo_children():
+        bind_scroll(child, canvas)
+
+
 def make_entry(parent, var=None, width=None, **kw):
     opts = dict(font=FONT_BODY, relief=tk.FLAT, bd=0, bg=C["card"],
                 fg=C["text"], insertbackground=C["primary"],
@@ -566,6 +573,7 @@ class RoomDialog(tk.Toplevel):
                        selectcolor=C["success"]).pack(side=tk.LEFT)
 
         cv = tk.Canvas(self, bg=C["bg"], highlightthickness=0)
+        self.cv = cv  # 保存引用供 bind_scroll 使用
         sb = tk.Scrollbar(self, orient=tk.VERTICAL, command=cv.yview)
         self.ct = tk.Frame(cv, bg=C["bg"])
         self.ct.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
@@ -719,6 +727,8 @@ class RoomDialog(tk.Toplevel):
             lambda *a: (self._update_lease(), self._refresh_rent()))
         self.lease_start_var.trace_add("write",
             lambda *a: self._update_lease())
+        # 递归绑定滚轮到内容区所有子widget
+        bind_scroll(self.ct, self.cv)
 
     def _update_lease(self):
         s, m = self.lease_start_var.get().strip(), self.lease_months_var.get()
@@ -1003,6 +1013,7 @@ class App(tk.Tk):
         search.bind("<FocusOut>", lambda e: search.insert(0,"🔍 搜索...") if not search.get() else None)
 
         cv = tk.Canvas(ma, bg=C["bg"], highlightthickness=0)
+        self.home_cv = cv  # 保存引用
         scr = tk.Scrollbar(ma, orient=tk.VERTICAL, command=cv.yview)
         self.card_frm = tk.Frame(cv, bg=C["bg"])
         self.card_frm.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
@@ -1014,6 +1025,7 @@ class App(tk.Tk):
         scr.pack(side=tk.RIGHT, fill=tk.Y)
         search.bind("<KeyRelease>", lambda e: self._refresh_cards(search.get()))
         self._refresh_cards("")
+        bind_scroll(self.card_frm, cv)
 
     def _switch_theme(self, tn):
         self._apply_theme(tn); self._show_home()
@@ -1041,6 +1053,7 @@ class App(tk.Tk):
                 row = tk.Frame(self.card_frm, bg=C["bg"]); row.pack(fill=tk.X, padx=26, pady=8)
             self._bld_card(row, b).pack(side=tk.LEFT, fill=tk.X, expand=True,
                                         padx=(0,10) if i%cols==0 else (10,0))
+        bind_scroll(self.card_frm, self.home_cv)
 
     def _bld_card(self, parent, b):
         card = tk.Frame(parent, bg=C["card"],
@@ -1144,6 +1157,7 @@ class App(tk.Tk):
         floor_labels = building.get("floor_labels", {})
         for fn in range(1, floors+1):
             self._draw_floor_hscroll(ct, building, fn, rpf, rooms, floor_labels)
+        bind_scroll(ct, cv)
 
     def _draw_floor_hscroll(self, parent, building, floor_num, rpf, all_rooms, floor_labels):
         """楼层视图 - 带横向滚动条"""
