@@ -9,8 +9,19 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import json
 import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# 获取应用所在目录（兼容 PyInstaller exe）
+def get_app_dir():
+    """返回exe/脚本所在目录，确保数据文件写在正确位置"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后：exe所在目录
+        return os.path.dirname(sys.executable)
+    else:
+        # 开发环境：脚本所在目录
+        return os.path.dirname(os.path.abspath(__file__))
 
 # ============================================================
 # 深色主题配色
@@ -127,8 +138,9 @@ class RoundedBtn(tk.Canvas):
 class BackBtn(tk.Canvas):
     """返回按钮"""
     def __init__(self, parent, command, **kw):
+        bg = kw.pop("bg", C["card"])
         super().__init__(parent, width=38, height=38,
-                         bg=C["bg"], highlightthickness=0, **kw)
+                         bg=bg, highlightthickness=0, **kw)
         self.cmd = command
         for e, cb in [("<Button-1>", lambda e: self.cmd()),
                       ("<Enter>", self._over), ("<Leave>", self._out)]:
@@ -597,7 +609,7 @@ class App(tk.Tk):
         self.minsize(860, 600)
         self.configure(bg=C["bg"])
 
-        dp = Path(__file__).parent / "housing_data.json"
+        dp = os.path.join(get_app_dir(), "housing_data.json")
         self.dm = DataStore(str(dp))
 
         self.nav = []
