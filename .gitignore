@@ -91,6 +91,12 @@ logs/
 *.pptx
 *.csv
 
+# 示例参考
+example/
+
+# 规格工作流
+.spec-workflow/
+
 # Coze / Preview
 .cozeproj/
 .preview
