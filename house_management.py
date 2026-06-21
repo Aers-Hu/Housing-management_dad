@@ -566,15 +566,17 @@ class RoomDialog(tk.Toplevel):
                              highlightcolor=C["primary"], highlightthickness=1)
         self.notes.pack(fill=tk.X, padx=24, ipady=6)
 
-        bf = tk.Frame(self, bg=C["bg"]); bf.pack(fill=tk.X, pady=14, padx=24)
+        # 按钮竖向排列：取消在上，保存在下
+        bf = tk.Frame(self, bg=C["bg"])
+        bf.pack(fill=tk.X, pady=(12,14), padx=24)
         RoundedBtn(bf, "取消", command=self.destroy,
-                   bg=C["border"], fg=C["text"], width=90, height=38,
-                   canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=4)
-        self.transfer_btn = RoundedBtn(bf, "🔄 转移", command=self._do_transfer,
-                                       bg=C["warning"], width=90, height=38,
+                   bg=C["border"], fg=C["text"], width=200, height=40,
+                   canvas_bg=C["bg"]).pack(pady=3)
+        self.transfer_btn = RoundedBtn(bf, "🔄 转移租客", command=self._do_transfer,
+                                       bg=C["warning"], width=200, height=40,
                                        canvas_bg=C["bg"])
-        RoundedBtn(bf, "💾 保存", command=self._save, width=90, height=38,
-                   canvas_bg=C["bg"]).pack(side=tk.RIGHT, padx=4)
+        RoundedBtn(bf, "💾 保存", command=self._save, width=200, height=40,
+                   canvas_bg=C["bg"]).pack(pady=3)
 
     def _apply_default_amount(self):
         """将默认金额应用到所有月份"""
@@ -601,7 +603,7 @@ class RoomDialog(tk.Toplevel):
                     for cc in c.winfo_children():
                         if isinstance(cc, RoundedBtn) and cc.txt and "保存" in cc.txt:
                             save_btn = cc; break
-            if save_btn: self.transfer_btn.pack(side=tk.LEFT, padx=4, before=save_btn)
+            if save_btn: self.transfer_btn.pack(pady=3, before=save_btn)
         else:
             self.transfer_btn.pack_forget()
 
