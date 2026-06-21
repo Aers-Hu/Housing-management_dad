@@ -98,19 +98,24 @@ def end_date_str(start_str, total_months):
     except: return ""
 
 def rent_is_paid(rent_paid, month_key):
-    """安全获取某月是否已付（兼容 bool 和 dict 格式）"""
+    """安全获取某月是否已付（兼容 bool/dict/None 格式）"""
+    if not rent_paid: return False
     v = rent_paid.get(month_key, False)
     if isinstance(v, dict): return v.get("paid", False)
     return bool(v)
 
 def rent_amount(rent_paid, month_key):
     """安全获取某月租金金额"""
+    if not rent_paid: return 0
     v = rent_paid.get(month_key, False)
     if isinstance(v, dict): return v.get("amount", 0)
     return 0
 
 def set_rent(rent_paid, month_key, paid=None, amount=None):
-    """设置某月租金（自动迁移格式）"""
+    """设置某月租金（自动处理 None → dict）"""
+    if not isinstance(rent_paid, dict):
+        # None 或其他非法值 → 初始化为空
+        return  # 不能在原地修改，调用方需确保传入的是有效的可变字典
     old = rent_paid.get(month_key, False)
     if isinstance(old, dict):
         entry = dict(old)
@@ -121,17 +126,22 @@ def set_rent(rent_paid, month_key, paid=None, amount=None):
     rent_paid[month_key] = entry
 
 def migrate_rent_paid(rent_paid):
-    """迁移旧格式 rent_paid（bool → {paid, amount}）"""
-    if not rent_paid: return
+    """迁移旧格式 rent_paid（bool → {paid, amount}），同时处理 None"""
+    if not rent_paid:
+        return
     for k, v in list(rent_paid.items()):
         if not isinstance(v, dict):
             rent_paid[k] = {"paid": bool(v), "amount": 0}
 
 def migrate_all_data(data):
-    """迁移所有房间的旧数据格式"""
+    """迁移所有房间的旧数据格式，修复 None 值"""
     for b in data.get("buildings", []):
         for r in b.get("rooms", []):
-            migrate_rent_paid(r.get("rent_paid", {}))
+            rp = r.get("rent_paid")
+            if rp is None or not isinstance(rp, dict):
+                r["rent_paid"] = {}
+            else:
+                migrate_rent_paid(rp)
 
 
 # ============================================================
@@ -640,7 +650,11 @@ class RoomDialog(tk.Toplevel):
     def _refresh_rent(self):
         for w in self.rent_grid.winfo_children(): w.destroy()
         months = self.lease_months_var.get()
-        rp = self.room.get("rent_paid", {})
+        # 安全获取，防止 None
+        rp = self.room.get("rent_paid")
+        if not isinstance(rp, dict):
+            rp = {}
+            self.room["rent_paid"] = rp
 
         for i in range(months):
             m = i + 1; k = str(m)
@@ -692,8 +706,11 @@ class RoomDialog(tk.Toplevel):
         self._refresh_rent()
 
     def _apply(self):
-        # 先保存租金金额输入
-        rp = self.room.setdefault("rent_paid", {})
+        # 安全获取 rent_paid（防止 None）
+        rp = self.room.get("rent_paid")
+        if not isinstance(rp, dict):
+            rp = {}
+            self.room["rent_paid"] = rp
         for row in self.rent_grid.winfo_children():
             if isinstance(row, tk.Frame):
                 for child in row.winfo_children():
@@ -1085,12 +1102,13 @@ class App(tk.Tk):
         h_canvas.pack(side=tk.TOP, fill=tk.X, expand=True)
         h_scroll.pack(side=tk.TOP, fill=tk.X)
 
-        # 鼠标滚轮水平滚动
+        # 鼠标滚轮水平滚动（直接绑定到 canvas 自身，不用 bind_all）
         def _on_hwheel(event):
             h_canvas.xview_scroll(int(-event.delta/60), "units")
 
-        h_canvas.bind("<Enter>", lambda e: h_canvas.bind_all("<MouseWheel>", _on_hwheel))
-        h_canvas.bind("<Leave>", lambda e: h_canvas.unbind_all("<MouseWheel>"))
+        h_canvas.bind("<MouseWheel>", _on_hwheel)
+        # 让子 widget 也能传递滚轮事件到 canvas
+        grid.bind("<MouseWheel>", _on_hwheel)
 
         for rn in range(1, rpf+1):
             rid = f"{floor_num:02d}{rn:02d}"
