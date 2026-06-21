@@ -286,98 +286,84 @@ class BuildingDialog(tk.Toplevel):
         is_edit = building is not None
 
         self.title("编辑楼房" if is_edit else "添加楼房")
-        self.geometry("500x580")
         self.resizable(False, False)
         self.configure(bg=C["bg"])
         self.transient(parent); self.grab_set()
-        self._center(parent)
         self._ui()
+        self._center(parent)
 
     def _center(self, p):
         self.update_idletasks()
-        x = p.winfo_rootx() + (p.winfo_width()-500)//2
-        y = p.winfo_rooty() + (p.winfo_height()-580)//2
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
+        x = p.winfo_rootx() + (p.winfo_width()-w)//2
+        y = p.winfo_rooty() + (p.winfo_height()-h)//2
         self.geometry(f"+{x}+{y}")
 
     def _ui(self):
-        # 可滚动内容
-        cv = tk.Canvas(self, bg=C["bg"], highlightthickness=0)
-        sb = tk.Scrollbar(self, orient=tk.VERTICAL, command=cv.yview)
-        ct = tk.Frame(cv, bg=C["bg"])
-        ct.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
-        cw = cv.create_window((0,0), window=ct, anchor=tk.NW, width=500)
-        cv.configure(yscrollcommand=sb.set)
-        cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
-        cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        pad_x = 24
 
-        tk.Label(ct, text="编辑楼房信息" if self.building else "添加新楼房",
+        # 标题
+        tk.Label(self, text="编辑楼房信息" if self.building else "添加新楼房",
                  font=FONT_TITLE, fg=C["text"], bg=C["bg"]).pack(pady=(20,14))
 
         # 名称
-        tk.Label(ct, text="楼房名称", font=FONT_BODY,
-                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(8,2))
+        tk.Label(self, text="楼房名称", font=FONT_BODY,
+                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(8,2))
         self.name_var = tk.StringVar(value=self.building["name"] if self.building else "")
-        make_entry(ct, self.name_var).pack(fill=tk.X, padx=24, ipady=8)
+        make_entry(self, self.name_var).pack(fill=tk.X, padx=pad_x, ipady=8)
 
         # 层数
-        tk.Label(ct, text="层数", font=FONT_BODY,
-                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(14,2))
-        f1 = tk.Frame(ct, bg=C["bg"]); f1.pack(fill=tk.X, padx=24)
+        tk.Label(self, text="层数", font=FONT_BODY,
+                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(14,2))
+        f1 = tk.Frame(self, bg=C["bg"]); f1.pack(fill=tk.X, padx=pad_x)
         self.floors_var = tk.IntVar(value=self.building["floors"] if self.building else 5)
         tk.Scale(f1, from_=1, to=30, orient=tk.HORIZONTAL,
                  variable=self.floors_var, bg=C["bg"],
                  troughcolor=C["border"], activebackground=C["primary"],
-                 highlightthickness=0, length=420, fg=C["text"],
+                 highlightthickness=0, length=380, fg=C["text"],
                  font=FONT_SMALL).pack(side=tk.LEFT)
         tk.Label(f1, textvariable=self.floors_var, font=FONT_BODY,
                  fg=C["primary"], bg=C["bg"], width=3).pack(side=tk.RIGHT)
 
         # 每层户数
-        tk.Label(ct, text="每层户数", font=FONT_BODY,
-                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(14,2))
-        f2 = tk.Frame(ct, bg=C["bg"]); f2.pack(fill=tk.X, padx=24)
+        tk.Label(self, text="每层户数", font=FONT_BODY,
+                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(14,2))
+        f2 = tk.Frame(self, bg=C["bg"]); f2.pack(fill=tk.X, padx=pad_x)
         self.rooms_var = tk.IntVar(value=self.building["rooms_per_floor"] if self.building else 4)
         tk.Scale(f2, from_=1, to=10, orient=tk.HORIZONTAL,
                  variable=self.rooms_var, bg=C["bg"],
                  troughcolor=C["border"], activebackground=C["primary"],
-                 highlightthickness=0, length=420, fg=C["text"],
+                 highlightthickness=0, length=380, fg=C["text"],
                  font=FONT_SMALL).pack(side=tk.LEFT)
         tk.Label(f2, textvariable=self.rooms_var, font=FONT_BODY,
                  fg=C["primary"], bg=C["bg"], width=3).pack(side=tk.RIGHT)
 
-        # ---- 修改楼层号 ----
-        self._floor_labels_warn = tk.Label(ct, text="",
-                                           font=FONT_SMALL, fg=C["text_secondary"],
-                                           bg=C["bg"])
-        # 先声明，build 时再 pack
-        self._floor_labels_frame = tk.Frame(ct, bg=C["bg"])
+        # ---- 修改楼层号（仅编辑模式） ----
+        self._floor_labels_frame = tk.Frame(self, bg=C["bg"])
 
         if self.building:
-            tk.Label(ct, text="🏷️ 修改楼层号", font=FONT_HEADER,
-                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(18,4))
-            tk.Label(ct, text="可为每层设置自定义名称（留空则使用默认编号）",
+            tk.Label(self, text="🏷️ 修改楼层号", font=FONT_HEADER,
+                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(18,4))
+            tk.Label(self, text="可为每层设置自定义名称（留空则使用默认编号）",
                      font=FONT_SMALL, fg=C["text_secondary"],
-                     bg=C["bg"]).pack(anchor=tk.W, padx=24, pady=(0,6))
-
+                     bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(0,6))
             self._floor_labels_frame.pack(fill=tk.X, padx=20, pady=4)
             self._floor_entries = {}
             self._build_floor_label_entries()
         else:
-            # 新建时不需要
-            self._floor_labels_warn.pack(pady=(10,0))
-            self._floor_labels_warn.configure(text="（新建后可在编辑中修改楼层号）")
+            self._floor_entries = {}
 
-        # 按钮 - 固定在底部
+        # ---- 按钮（直接在窗口底部） ----
         bf = tk.Frame(self, bg=C["bg"])
-        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=16, padx=24)
+        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(16,14), padx=pad_x)
         RoundedBtn(bf, "取消", command=self.destroy,
                    bg=C["border"], fg=C["text"], width=100, height=38,
                    canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
-        RoundedBtn(bf, "保存", command=self._save, width=100, height=38,
+        RoundedBtn(bf, "💾 保存", command=self._save, width=100, height=38,
                    canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
 
-        # 监听层数变化，刷新标签输入
+        # 监听层数变化
         self.floors_var.trace_add("write", lambda *a: self._on_floors_change())
 
     def _build_floor_label_entries(self):
