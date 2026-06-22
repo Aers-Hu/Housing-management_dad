@@ -13,7 +13,7 @@ import {
 import { Screen } from '@/components/Screen';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { StorageService } from '@/utils/storage';
-import { Building, Room, groupRoomsByFloor, getBuildingStats } from '@/utils/roomTypes';
+import { Building, Room, groupRoomsByFloor, getBuildingStats, getFloorLabel } from '@/utils/roomTypes';
 import { useFocusEffect } from 'expo-router';
 
 export default function BuildingScreen() {
@@ -28,6 +28,17 @@ export default function BuildingScreen() {
   const [nameModalVisible, setNameModalVisible] = useState(false);
   const [namingRoom, setNamingRoom] = useState<Room | null>(null);
   const [roomNewName, setRoomNewName] = useState('');
+
+  // 编辑楼房菜单
+  const [editMenuVisible, setEditMenuVisible] = useState(false);
+
+  // 编辑楼层号弹窗
+  const [floorLabelModalVisible, setFloorLabelModalVisible] = useState(false);
+  const [floorLabelDraft, setFloorLabelDraft] = useState<Record<number, string>>({});
+
+  // 批量命名房间弹窗
+  const [batchModalVisible, setBatchModalVisible] = useState(false);
+  const [batchNameDraft, setBatchNameDraft] = useState<Record<string, string>>({});
 
   const loadData = useCallback(async () => {
     if (!buildingId) return;
@@ -80,6 +91,54 @@ export default function BuildingScreen() {
     await loadData();
   };
 
+  // 打开编辑楼层号弹窗
+  const openFloorLabelModal = () => {
+    if (!building) return;
+    const draft: Record<number, string> = {};
+    for (let f = 1; f <= building.floors; f++) {
+      draft[f] = getFloorLabel(building, f);
+    }
+    setFloorLabelDraft(draft);
+    setEditMenuVisible(false);
+    setTimeout(() => setFloorLabelModalVisible(true), 250);
+  };
+
+  // 保存楼层号
+  const handleSaveFloorLabels = async () => {
+    if (!building) return;
+    const labels: Record<number, string> = {};
+    for (const [floorStr, label] of Object.entries(floorLabelDraft)) {
+      const floor = Number(floorStr);
+      const trimmed = label.trim();
+      // 只保存与默认值不同的楼层号
+      if (trimmed && trimmed !== String(floor)) {
+        labels[floor] = trimmed;
+      }
+    }
+    const updated: Building = { ...building, floorLabels: labels };
+    await StorageService.updateBuilding(updated);
+    setFloorLabelModalVisible(false);
+    await loadData();
+  };
+
+  // 打开批量命名弹窗
+  const openBatchModal = () => {
+    const draft: Record<string, string> = {};
+    for (const r of rooms) draft[r.id] = r.name || '';
+    setBatchNameDraft(draft);
+    setEditMenuVisible(false);
+    setTimeout(() => setBatchModalVisible(true), 250);
+  };
+
+  // 保存批量命名
+  const handleSaveBatchNames = async () => {
+    if (!buildingId) return;
+    const updates = Object.entries(batchNameDraft).map(([id, name]) => ({ id, name: name.trim() }));
+    await StorageService.batchUpdateRooms(buildingId, updates);
+    setBatchModalVisible(false);
+    await loadData();
+  };
+
   const groupedRooms = groupRoomsByFloor(rooms);
   const floors = [...groupedRooms.keys()].sort((a, b) => b - a);
 
@@ -104,6 +163,9 @@ export default function BuildingScreen() {
         <View style={styles.header}>
           <TouchableOpacity onPress={handleBack} style={styles.backButton}>
             <Text style={styles.backText}>← 返回</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setEditMenuVisible(true)} style={styles.editBuildingButton}>
+            <Text style={styles.editBuildingText}>编辑楼房</Text>
           </TouchableOpacity>
         </View>
 
@@ -138,7 +200,7 @@ export default function BuildingScreen() {
             <View key={floor} style={styles.floorSection}>
               <View style={styles.floorHeader}>
                 <View style={styles.floorBadge}>
-                  <Text style={styles.floorBadgeText}>{floor} 楼</Text>
+                  <Text style={styles.floorBadgeText}>{getFloorLabel(building, floor)} 楼</Text>
                 </View>
                 <Text style={styles.floorInfo}>
                   {floorRooms.filter(r => r.isOccupied).length}/{floorRooms.length} 已入住
@@ -163,14 +225,10 @@ export default function BuildingScreen() {
                         styles.roomNumber,
                         room.isOccupied && styles.roomNumberOccupied,
                       ]}
+                      numberOfLines={1}
                     >
-                      {room.number}
+                      {room.name ? room.name : room.number}
                     </Text>
-                    {room.name ? (
-                      <Text style={styles.roomName} numberOfLines={1}>
-                        {room.name}
-                      </Text>
-                    ) : null}
                     <View
                       style={[
                         styles.statusDot,
@@ -230,6 +288,121 @@ export default function BuildingScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ========== 编辑楼房菜单 ========== */}
+      <Modal
+        visible={editMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setEditMenuVisible(false)}
+        >
+          <View style={styles.actionSheet}>
+            <Text style={styles.actionTitle}>编辑楼房</Text>
+            <TouchableOpacity style={styles.actionItem} onPress={openFloorLabelModal}>
+              <Text style={styles.actionItemText}>🏢  修改楼层号</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionItem} onPress={openBatchModal}>
+              <Text style={styles.actionItemText}>✏️  批量命名房间</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemCancel]}
+              onPress={() => setEditMenuVisible(false)}
+            >
+              <Text style={styles.actionItemText}>取消</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ========== 修改楼层号 Modal ========== */}
+      <Modal
+        visible={floorLabelModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFloorLabelModalVisible(false)}
+      >
+        <View style={styles.sheetOverlay}>
+          <View style={styles.formSheet}>
+            <Text style={styles.formTitle}>修改楼层号</Text>
+            <Text style={styles.formHint}>设置每一层显示的楼层号（例如把第 1 层显示为「2」）</Text>
+            <ScrollView style={styles.editList}>
+              {building && Array.from({ length: building.floors }, (_, i) => building.floors - i).map((floor) => (
+                <View key={floor} style={styles.editRow}>
+                  <Text style={styles.editRowLabel}>第 {floor} 层</Text>
+                  <Text style={styles.editRowArrow}>→</Text>
+                  <TextInput
+                    style={styles.editRowInput}
+                    value={floorLabelDraft[floor] ?? ''}
+                    onChangeText={(t) => setFloorLabelDraft(prev => ({ ...prev, [floor]: t }))}
+                    placeholder={String(floor)}
+                    placeholderTextColor="#B2BEC3"
+                  />
+                  <Text style={styles.editRowSuffix}>楼</Text>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={styles.formButtons}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setFloorLabelModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveFloorLabels}>
+                <Text style={styles.saveBtnText}>保存</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========== 批量命名房间 Modal ========== */}
+      <Modal
+        visible={batchModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setBatchModalVisible(false)}
+      >
+        <View style={styles.sheetOverlay}>
+          <View style={styles.formSheet}>
+            <Text style={styles.formTitle}>批量命名房间</Text>
+            <Text style={styles.formHint}>留空则显示原房间号</Text>
+            <ScrollView style={styles.editList}>
+              {floors.map((floor) => {
+                const floorRooms = groupedRooms.get(floor) || [];
+                return (
+                  <View key={floor}>
+                    <Text style={styles.batchFloorTitle}>{getFloorLabel(building, floor)} 楼</Text>
+                    {floorRooms.map((room) => (
+                      <View key={room.id} style={styles.editRow}>
+                        <Text style={styles.editRowLabel}>{room.number}</Text>
+                        <Text style={styles.editRowArrow}>→</Text>
+                        <TextInput
+                          style={styles.editRowInput}
+                          value={batchNameDraft[room.id] ?? ''}
+                          onChangeText={(t) => setBatchNameDraft(prev => ({ ...prev, [room.id]: t }))}
+                          placeholder="房间名称"
+                          placeholderTextColor="#B2BEC3"
+                        />
+                      </View>
+                    ))}
+                  </View>
+                );
+              })}
+            </ScrollView>
+            <View style={styles.formButtons}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setBatchModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveBatchNames}>
+                <Text style={styles.saveBtnText}>保存全部</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -254,6 +427,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 16,
   },
   backButton: {
@@ -264,6 +438,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6C63FF',
     fontWeight: '600',
+  },
+  editBuildingButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: '#F0F0F3',
+    borderRadius: 12,
+  },
+  editBuildingText: {
+    fontSize: 14,
+    color: '#6C63FF',
+    fontWeight: '700',
   },
   // 楼房信息
   buildingInfoCard: {
@@ -365,20 +550,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8F8F5',
   },
   roomNumber: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     color: '#2D3436',
     marginBottom: 2,
+    textAlign: 'center',
   },
   roomNumberOccupied: {
     color: '#00B894',
-  },
-  roomName: {
-    fontSize: 10,
-    color: '#6C63FF',
-    fontWeight: '600',
-    marginBottom: 4,
-    textAlign: 'center',
   },
   statusDot: {
     width: 8,
@@ -460,5 +639,112 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  // 底部弹出层
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  // 操作菜单
+  actionSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 34,
+  },
+  actionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#2D3436',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  actionItem: {
+    backgroundColor: '#F0F0F3',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  actionItemCancel: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8E8EB',
+    marginTop: 4,
+  },
+  actionItemText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  // 表单弹窗
+  formSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 34,
+    maxHeight: '80%',
+  },
+  formTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#2D3436',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  formHint: {
+    fontSize: 13,
+    color: '#636E72',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  editList: {
+    maxHeight: 380,
+  },
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  editRowLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2D3436',
+    width: 64,
+  },
+  editRowArrow: {
+    fontSize: 15,
+    color: '#B2BEC3',
+    marginHorizontal: 8,
+  },
+  editRowInput: {
+    flex: 1,
+    backgroundColor: '#F0F0F3',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    color: '#2D3436',
+  },
+  editRowSuffix: {
+    fontSize: 15,
+    color: '#636E72',
+    marginLeft: 8,
+  },
+  batchFloorTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#6C63FF',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  formButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
   },
 });

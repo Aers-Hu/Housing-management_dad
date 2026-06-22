@@ -7,6 +7,13 @@ export interface Building {
   floors: number;       // 层数
   roomsPerFloor: number; // 每层房间数
   createdAt: string;    // 创建时间 ISO
+  floorLabels?: Record<number, string>; // 楼层号自定义显示，键为内部楼层，值为显示楼层号，如 { 1: "2" } 表示把第1层显示为"2楼"
+}
+
+// 单月房租提交记录
+export interface RentRecord {
+  month: string;   // 月份标识 "YYYY-MM"
+  paid: boolean;   // 是否已提交
 }
 
 // 房屋数据类型
@@ -21,6 +28,8 @@ export interface Room {
   monthlyRent: number;   // 每月房租
   leaseStartDate?: string;  // 租期开始日期 (YYYY-MM-DD)
   leaseMonths?: number;     // 租期月数
+  notes?: string;           // 租客注解，方便房东记录信息
+  rentRecords?: RentRecord[]; // 每月房租提交记录
 }
 
 // ============================================================
@@ -116,4 +125,35 @@ export function getBuildingStats(rooms: Room[], buildingId: string) {
   const total = buildingRooms.length;
   const occupied = buildingRooms.filter(r => r.isOccupied).length;
   return { total, occupied, vacant: total - occupied };
+}
+
+// 获取楼层的显示标签（优先使用自定义的 floorLabels，否则用内部楼层号）
+export function getFloorLabel(building: Building | null | undefined, floor: number): string {
+  const custom = building?.floorLabels?.[floor];
+  return custom && custom.trim() ? custom.trim() : String(floor);
+}
+
+// 根据租期开始日期和总月数，生成每月清单（结合已有记录保留勾选状态）
+export function generateRentMonths(
+  leaseStartDate?: string,
+  leaseMonths?: number,
+  existingRecords?: RentRecord[]
+): RentRecord[] {
+  if (!leaseStartDate || !leaseMonths || leaseMonths < 1) return [];
+
+  const start = new Date(leaseStartDate);
+  if (isNaN(start.getTime())) return [];
+
+  const paidMap = new Map<string, boolean>();
+  if (existingRecords) {
+    for (const r of existingRecords) paidMap.set(r.month, r.paid);
+  }
+
+  const records: RentRecord[] = [];
+  for (let i = 0; i < leaseMonths; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    records.push({ month, paid: paidMap.get(month) ?? false });
+  }
+  return records;
 }

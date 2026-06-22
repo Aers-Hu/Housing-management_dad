@@ -112,6 +112,19 @@ async function updateRoom(updatedRoom: Room): Promise<Room[]> {
   return rooms;
 }
 
+// 批量更新多个房间（用于批量命名）
+async function batchUpdateRooms(buildingId: string, updates: { id: string; name: string }[]): Promise<Room[]> {
+  const rooms = await loadRooms(buildingId);
+  const updateMap = new Map(updates.map(u => [u.id, u.name]));
+  for (const room of rooms) {
+    if (updateMap.has(room.id)) {
+      room.name = updateMap.get(room.id)!;
+    }
+  }
+  await saveRoomsForBuilding(buildingId, rooms);
+  return rooms;
+}
+
 async function addRoom(buildingId: string, floor: number, number: string): Promise<Room> {
   const rooms = await loadRooms(buildingId);
   const room: Room = {
@@ -186,6 +199,7 @@ export const StorageService = {
   loadRooms,
   saveRoomsForBuilding,
   updateRoom,
+  batchUpdateRooms,
   addRoom,
   deleteRoom,
   transferTenant,

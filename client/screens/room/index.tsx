@@ -14,7 +14,7 @@ import {
 import { Screen } from '@/components/Screen';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { StorageService } from '@/utils/storage';
-import { Building, Room, calculateRemainingMonths, getVacantRooms } from '@/utils/roomTypes';
+import { Building, Room, RentRecord, calculateRemainingMonths, getVacantRooms, generateRentMonths } from '@/utils/roomTypes';
 
 export default function RoomDetailScreen() {
   const router = useSafeRouter();
@@ -28,6 +28,8 @@ export default function RoomDetailScreen() {
   const [monthlyRent, setMonthlyRent] = useState('');
   const [leaseStartDate, setLeaseStartDate] = useState('');
   const [leaseMonths, setLeaseMonths] = useState('');
+  const [notes, setNotes] = useState('');
+  const [rentRecords, setRentRecords] = useState<RentRecord[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
 
   // 转移
@@ -53,6 +55,10 @@ export default function RoomDetailScreen() {
       setMonthlyRent(found.monthlyRent ? String(found.monthlyRent) : '');
       setLeaseStartDate(found.leaseStartDate || '');
       setLeaseMonths(found.leaseMonths ? String(found.leaseMonths) : '');
+      setNotes(found.notes || '');
+      setRentRecords(
+        generateRentMonths(found.leaseStartDate, found.leaseMonths, found.rentRecords)
+      );
     }
   }, [buildingId, roomId]);
 
@@ -70,6 +76,8 @@ export default function RoomDetailScreen() {
       setMonthlyRent('');
       setLeaseStartDate('');
       setLeaseMonths('');
+      setNotes('');
+      setRentRecords([]);
     }
   };
 
@@ -86,10 +94,23 @@ export default function RoomDetailScreen() {
   const handleStartDateChange = (text: string) => {
     setLeaseStartDate(text);
     setHasChanges(true);
+    setRentRecords(prev => generateRentMonths(text, leaseMonths ? parseInt(leaseMonths, 10) : undefined, prev));
   };
 
   const handleMonthsChange = (text: string) => {
-    setLeaseMonths(text.replace(/[^0-9]/g, ''));
+    const cleaned = text.replace(/[^0-9]/g, '');
+    setLeaseMonths(cleaned);
+    setHasChanges(true);
+    setRentRecords(prev => generateRentMonths(leaseStartDate, cleaned ? parseInt(cleaned, 10) : undefined, prev));
+  };
+
+  const handleNotesChange = (text: string) => {
+    setNotes(text);
+    setHasChanges(true);
+  };
+
+  const toggleRentRecord = (month: string) => {
+    setRentRecords(prev => prev.map(r => (r.month === month ? { ...r, paid: !r.paid } : r)));
     setHasChanges(true);
   };
 
@@ -120,6 +141,8 @@ export default function RoomDetailScreen() {
       monthlyRent: isOccupied ? parseInt(monthlyRent, 10) || 0 : 0,
       leaseStartDate: isOccupied ? leaseStartDate : undefined,
       leaseMonths: isOccupied && leaseMonths ? parseInt(leaseMonths, 10) : undefined,
+      notes: isOccupied ? notes.trim() : undefined,
+      rentRecords: isOccupied ? rentRecords : undefined,
     };
 
     await StorageService.updateRoom(updated);
@@ -263,6 +286,20 @@ export default function RoomDetailScreen() {
                   keyboardType="numeric"
                 />
               </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>租客注解</Text>
+                <TextInput
+                  style={[styles.textInput, styles.textArea]}
+                  value={notes}
+                  onChangeText={handleNotesChange}
+                  placeholder="记录租客相关信息，方便日后查询（如联系方式、押金、特殊约定等）"
+                  placeholderTextColor="#B2BEC3"
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
             </View>
 
             {/* 租期信息 */}
@@ -317,6 +354,36 @@ export default function RoomDetailScreen() {
                 </View>
               ) : null}
             </View>
+
+            {/* 每月房租提交记录 */}
+            {rentRecords.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.rentHeader}>
+                  <Text style={styles.sectionTitle}>每月房租提交</Text>
+                  <Text style={styles.rentSummary}>
+                    已交 {rentRecords.filter(r => r.paid).length}/{rentRecords.length} 个月
+                  </Text>
+                </View>
+                {rentRecords.map((rec) => (
+                  <TouchableOpacity
+                    key={rec.month}
+                    style={[styles.rentRow, rec.paid && styles.rentRowPaid]}
+                    onPress={() => toggleRentRecord(rec.month)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.rentMonth}>{rec.month}</Text>
+                    <View style={styles.rentRight}>
+                      <Text style={[styles.rentStatus, rec.paid ? styles.rentStatusPaid : styles.rentStatusUnpaid]}>
+                        {rec.paid ? '已提交' : '未提交'}
+                      </Text>
+                      <View style={[styles.rentCheckbox, rec.paid && styles.rentCheckboxPaid]}>
+                        {rec.paid && <Text style={styles.rentCheckmark}>✓</Text>}
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
             {/* 转移功能 */}
             <TouchableOpacity
@@ -556,6 +623,74 @@ const styles = StyleSheet.create({
     padding: 16,
     fontSize: 16,
     color: '#2D3436',
+  },
+  textArea: {
+    minHeight: 96,
+    paddingTop: 14,
+  },
+  // 每月房租提交
+  rentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  rentSummary: {
+    fontSize: 13,
+    color: '#6C63FF',
+    fontWeight: '600',
+  },
+  rentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#E8E8EB',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  rentRowPaid: {
+    backgroundColor: 'rgba(0, 184, 148, 0.12)',
+  },
+  rentMonth: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  rentRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rentStatus: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginRight: 12,
+  },
+  rentStatusPaid: {
+    color: '#00B894',
+  },
+  rentStatusUnpaid: {
+    color: '#B2BEC3',
+  },
+  rentCheckbox: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#B2BEC3',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  rentCheckboxPaid: {
+    backgroundColor: '#00B894',
+    borderColor: '#00B894',
+  },
+  rentCheckmark: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
   },
   // 剩余租期
   remainingCard: {
