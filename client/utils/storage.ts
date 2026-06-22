@@ -168,6 +168,8 @@ async function transferTenant(
     monthlyRent: fromRoom.monthlyRent,
     leaseStartDate: fromRoom.leaseStartDate,
     leaseMonths: fromRoom.leaseMonths,
+    notes: fromRoom.notes,
+    rentRecords: fromRoom.rentRecords,
   };
 
   // 清空原房间
@@ -178,6 +180,8 @@ async function transferTenant(
     monthlyRent: 0,
     leaseStartDate: undefined,
     leaseMonths: undefined,
+    notes: undefined,
+    rentRecords: undefined,
   };
 
   rooms[rooms.findIndex(r => r.id === fromRoom.id)] = updatedFromRoom;

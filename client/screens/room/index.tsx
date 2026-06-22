@@ -26,16 +26,27 @@ export default function RoomDetailScreen() {
   const [isOccupied, setIsOccupied] = useState(false);
   const [tenantName, setTenantName] = useState('');
   const [monthlyRent, setMonthlyRent] = useState('');
-  const [leaseStartDate, setLeaseStartDate] = useState('');
+  const [leaseYear, setLeaseYear] = useState('');
+  const [leaseMonth, setLeaseMonth] = useState('');
+  const [leaseDay, setLeaseDay] = useState('');
   const [leaseMonths, setLeaseMonths] = useState('');
   const [notes, setNotes] = useState('');
   const [rentRecords, setRentRecords] = useState<RentRecord[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // 由年/月/日组合出完整日期；不齐全时为空字符串
+  const leaseStartDate =
+    leaseYear && leaseMonth && leaseDay
+      ? `${leaseYear}-${String(parseInt(leaseMonth, 10)).padStart(2, '0')}-${String(parseInt(leaseDay, 10)).padStart(2, '0')}`
+      : '';
+
   // 转移
   const [transferModalVisible, setTransferModalVisible] = useState(false);
   const [allRooms, setAllRooms] = useState<Room[]>([]);
   const [selectedTargetRoomId, setSelectedTargetRoomId] = useState('');
+
+  // 日期下拉选择
+  const [datePickerField, setDatePickerField] = useState<'year' | 'month' | 'day' | null>(null);
 
   const loadData = useCallback(async () => {
     if (!buildingId || !roomId) return;
@@ -53,7 +64,16 @@ export default function RoomDetailScreen() {
       setIsOccupied(found.isOccupied);
       setTenantName(found.tenantName || '');
       setMonthlyRent(found.monthlyRent ? String(found.monthlyRent) : '');
-      setLeaseStartDate(found.leaseStartDate || '');
+      const dm = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(found.leaseStartDate || '');
+      if (dm) {
+        setLeaseYear(dm[1]);
+        setLeaseMonth(String(parseInt(dm[2], 10)));
+        setLeaseDay(String(parseInt(dm[3], 10)));
+      } else {
+        setLeaseYear('');
+        setLeaseMonth('');
+        setLeaseDay('');
+      }
       setLeaseMonths(found.leaseMonths ? String(found.leaseMonths) : '');
       setNotes(found.notes || '');
       setRentRecords(
@@ -74,7 +94,9 @@ export default function RoomDetailScreen() {
     if (!value) {
       setTenantName('');
       setMonthlyRent('');
-      setLeaseStartDate('');
+      setLeaseYear('');
+      setLeaseMonth('');
+      setLeaseDay('');
       setLeaseMonths('');
       setNotes('');
       setRentRecords([]);
@@ -91,11 +113,29 @@ export default function RoomDetailScreen() {
     setHasChanges(true);
   };
 
-  const handleStartDateChange = (text: string) => {
-    setLeaseStartDate(text);
+  // 当前已选的年/月/日
+  const dateParts = { year: leaseYear, month: leaseMonth, day: leaseDay };
+
+  // 选择年/月/日后更新对应部分，齐全时重算交租清单
+  const handleDatePartChange = (field: 'year' | 'month' | 'day', value: string) => {
+    const next = { ...dateParts, [field]: value };
+    if (field === 'year') setLeaseYear(value);
+    else if (field === 'month') setLeaseMonth(value);
+    else setLeaseDay(value);
     setHasChanges(true);
-    setRentRecords(prev => generateRentMonths(text, leaseMonths ? parseInt(leaseMonths, 10) : undefined, prev));
+
+    if (next.year && next.month && next.day) {
+      const composed = `${next.year}-${String(parseInt(next.month, 10)).padStart(2, '0')}-${String(parseInt(next.day, 10)).padStart(2, '0')}`;
+      setRentRecords(prev => generateRentMonths(composed, leaseMonths ? parseInt(leaseMonths, 10) : undefined, prev));
+    }
+    setDatePickerField(null);
   };
+
+  // 生成下拉选项：年份就近降序（当前年在前）
+  const now = new Date();
+  const yearOptions = Array.from({ length: 11 }, (_, i) => String(now.getFullYear() - i));
+  const monthOptions = Array.from({ length: 12 }, (_, i) => String(i + 1));
+  const dayOptions = Array.from({ length: 31 }, (_, i) => String(i + 1));
 
   const handleMonthsChange = (text: string) => {
     const cleaned = text.replace(/[^0-9]/g, '');
@@ -308,13 +348,35 @@ export default function RoomDetailScreen() {
 
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>租期开始日期</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={leaseStartDate}
-                  onChangeText={handleStartDateChange}
-                  placeholder="格式: 2024-01-01"
-                  placeholderTextColor="#B2BEC3"
-                />
+                <View style={styles.dateRow}>
+                  <TouchableOpacity
+                    style={styles.dateField}
+                    onPress={() => setDatePickerField('year')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={dateParts.year ? styles.dateFieldText : styles.dateFieldPlaceholder}>
+                      {dateParts.year || '年'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.dateField}
+                    onPress={() => setDatePickerField('month')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={dateParts.month ? styles.dateFieldText : styles.dateFieldPlaceholder}>
+                      {dateParts.month ? `${dateParts.month} 月` : '月'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.dateField}
+                    onPress={() => setDatePickerField('day')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={dateParts.day ? styles.dateFieldText : styles.dateFieldPlaceholder}>
+                      {dateParts.day ? `${dateParts.day} 日` : '日'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <View style={styles.inputGroup}>
@@ -464,6 +526,51 @@ export default function RoomDetailScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* ========== 日期下拉选择 Modal ========== */}
+      <Modal
+        visible={datePickerField !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setDatePickerField(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setDatePickerField(null)}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {datePickerField === 'year' ? '选择年份' : datePickerField === 'month' ? '选择月份' : '选择日期'}
+              </Text>
+              <TouchableOpacity onPress={() => setDatePickerField(null)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.roomsList}>
+              {(datePickerField === 'year' ? yearOptions : datePickerField === 'month' ? monthOptions : dayOptions).map((opt) => {
+                const selected =
+                  datePickerField === 'year' ? dateParts.year === opt
+                  : datePickerField === 'month' ? dateParts.month === opt
+                  : dateParts.day === opt;
+                return (
+                  <TouchableOpacity
+                    key={opt}
+                    style={[styles.dateOption, selected && styles.dateOptionSelected]}
+                    onPress={() => datePickerField && handleDatePartChange(datePickerField, opt)}
+                  >
+                    <Text style={[styles.dateOptionText, selected && styles.dateOptionTextSelected]}>
+                      {opt}{datePickerField === 'year' ? ' 年' : datePickerField === 'month' ? ' 月' : ' 日'}
+                    </Text>
+                    {selected && <Text style={styles.roomOptionCheck}>✓</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </Screen>
   );
@@ -627,6 +734,51 @@ const styles = StyleSheet.create({
   textArea: {
     minHeight: 96,
     paddingTop: 14,
+  },
+  // 日期下拉
+  dateRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  dateField: {
+    flex: 1,
+    backgroundColor: '#E8E8EB',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  dateFieldText: {
+    fontSize: 16,
+    color: '#2D3436',
+    fontWeight: '600',
+  },
+  dateFieldPlaceholder: {
+    fontSize: 16,
+    color: '#B2BEC3',
+  },
+  dateOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginBottom: 10,
+  },
+  dateOptionSelected: {
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderWidth: 2,
+    borderColor: '#6C63FF',
+  },
+  dateOptionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  dateOptionTextSelected: {
+    color: '#6C63FF',
   },
   // 每月房租提交
   rentHeader: {
