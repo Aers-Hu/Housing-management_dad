@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import json, os, sys
 from datetime import datetime, timedelta
+import calendar
 
 # ============================================================
 # 5套主题
@@ -76,26 +77,64 @@ def get_app_dir():
 def gen_id():
     return datetime.now().strftime("%Y%m%d%H%M%S%f")
 
+def parse_date(s):
+    """灵活解析日期，兼容 2026-06-18 和 2026-6-18 等格式"""
+    if not s: return None
+    parts = s.strip().split('-')
+    if len(parts) == 3:
+        try: return datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+        except: pass
+    return None
+
+def normalize_date_str(s):
+    """将日期字符串规范化为 YYYY-MM-DD 格式"""
+    dt = parse_date(s)
+    return dt.strftime("%Y-%m-%d") if dt else s
+
 def fmt_date(s):
     if not s: return ""
-    try: return datetime.strptime(s,"%Y-%m-%d").strftime("%Y年%m月%d日")
-    except: return s
+    dt = parse_date(s)
+    if dt: return dt.strftime("%Y年%m月%d日")
+    return s
 
 def remaining_months(start_str, total_months):
+    """计算剩余完整月份数（按自然月计算）"""
     if not start_str or total_months <= 0: return -1
-    try:
-        start = datetime.strptime(start_str, "%Y-%m-%d")
-        end = start + timedelta(days=total_months * 30)
-        now = datetime.now()
-        if now > end: return 0
-        return max(0, (end - now).days // 30)
-    except: return -1
+    dt = parse_date(start_str)
+    if dt:
+        try:
+            # 按月份计算到期日
+            total = dt.month + int(total_months) - 1
+            year = dt.year + total // 12
+            month = total % 12 + 1
+            max_day = calendar.monthrange(year, month)[1]
+            end = datetime(year, month, min(dt.day, max_day))
+            now = datetime.now()
+            if now >= end: return 0
+            # 计算从now到end的完整月份差
+            months_count = (end.year - now.year) * 12 + (end.month - now.month)
+            if end.day < now.day:
+                months_count -= 1
+            return max(0, months_count)
+        except: return -1
+    return -1
 
 def end_date_str(start_str, total_months):
+    """按月份加减计算到期日，例如 2026-01-01 + 12个月 = 2027-01-01"""
     if not start_str or total_months <= 0: return ""
-    try: return (datetime.strptime(start_str,"%Y-%m-%d") +
-                 timedelta(days=total_months*30)).strftime("%Y-%m-%d")
-    except: return ""
+    dt = parse_date(start_str)
+    if dt:
+        try:
+            # 月份累加
+            total = dt.month + int(total_months) - 1
+            year = dt.year + total // 12
+            month = total % 12 + 1
+            # 处理目标月份天数不足的情况（如1月31日 + 1个月 → 2月28/29日）
+            max_day = calendar.monthrange(year, month)[1]
+            day = min(dt.day, max_day)
+            return datetime(year, month, day).strftime("%Y-%m-%d")
+        except: return ""
+    return ""
 
 def rent_is_paid(rent_paid, month_key):
     """安全获取某月是否已付（兼容 bool/dict/None 格式）"""
@@ -819,7 +858,7 @@ class RoomDialog(tk.Toplevel):
         self.room["name"] = self.name_var.get().strip() or self.room["id"]
         self.room["occupied"] = self.occ_var.get()
         self.room["tenant_name"] = self.tenant_var.get().strip()
-        self.room["lease_start"] = self.lease_start_var.get().strip()
+        self.room["lease_start"] = normalize_date_str(self.lease_start_var.get().strip())
         self.room["lease_months"] = self.lease_months_var.get()
         self.room["notes"] = self.notes.get("1.0", tk.END).strip()
 
