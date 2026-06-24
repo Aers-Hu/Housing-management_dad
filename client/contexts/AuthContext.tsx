@@ -1,18 +1,11 @@
-// @ts-nocheck
-/**
- * 通用认证上下文
- *
- * 基于固定的 API 接口实现，可复用到其他项目
- * 其他项目使用时，只需修改 @api 的导入路径指向项目的 api 模块
- *
- * 注意：
- * - 如果需要登录/鉴权场景，请扩展本文件，完善 login/logout、token 管理、用户信息获取与刷新等逻辑
- * - 将示例中的占位实现替换为项目实际的接口调用与状态管理
- */
-import React, { createContext, useContext, ReactNode } from "react";
+import React, { createContext, useContext, ReactNode, useState, useEffect, useCallback } from "react";
+import { apiRequest, getToken, setToken } from "@/utils/api";
+import { flushOutbox } from "@/utils/sync";
 
 interface UserOut {
-
+  id: string;
+  username: string;
+  createdAt?: string;
 }
 
 interface AuthContextType {
@@ -20,7 +13,7 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (token: string) => Promise<void>;
+  login: (token: string, user: UserOut) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (userData: Partial<UserOut>) => void;
 }
@@ -28,20 +21,58 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<UserOut | null>(null);
+  const [token, setTok] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // 启动时：若本地有 token，校验有效性并恢复登录态；顺带重放离线队列
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await getToken();
+        if (saved) {
+          try {
+            const data = await apiRequest<{ user: UserOut }>('/auth/me');
+            setUser(data.user);
+            setTok(saved);
+            flushOutbox().catch(() => undefined); // 恢复登录后尝试同步离线改动
+          } catch {
+            // token 失效或服务器暂时不可达：清登录态，引导重新登录
+            setUser(null);
+            setTok(null);
+          }
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, []);
+
+  const login = useCallback(async (newToken: string, newUser: UserOut) => {
+    await setToken(newToken);
+    setTok(newToken);
+    setUser(newUser);
+    flushOutbox().catch(() => undefined); // 登录后立即尝试同步
+  }, []);
+
+  const logout = useCallback(async () => {
+    await setToken(null);
+    setTok(null);
+    setUser(null);
+  }, []);
+
+  const updateUser = useCallback((userData: Partial<UserOut>) => {
+    setUser((prev) => (prev ? { ...prev, ...userData } : prev));
+  }, []);
+
   const value: AuthContextType = {
-    user: null,
-    token: null,
-    isAuthenticated: false,
-    isLoading: false,
-
-    // 登录逻辑，根据项目实际情况实现
-    login: async (token: string) => {}, // eslint-disable-line @typescript-eslint/no-empty-function
-
-    // 登出逻辑，根据项目实际情况实现
-    logout: async () => {}, // eslint-disable-line @typescript-eslint/no-empty-function
-
-    // 更新用户信息，根据项目实际情况实现
-    updateUser: () => {}, // eslint-disable-line @typescript-eslint/no-empty-function
+    user,
+    token,
+    isAuthenticated: !!token && !!user,
+    isLoading,
+    login,
+    logout,
+    updateUser,
   };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

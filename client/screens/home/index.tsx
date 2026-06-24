@@ -15,9 +15,13 @@ import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { StorageService } from '@/utils/storage';
 import { Building, Room, getBuildingStats } from '@/utils/roomTypes';
 import { useFocusEffect } from 'expo-router';
+import { useAuth } from '@/contexts/AuthContext';
+import { FontAwesome6 } from '@expo/vector-icons';
 
 export default function HomeScreen() {
   const router = useSafeRouter();
+  const { user, logout } = useAuth();
+  const [userMenuVisible, setUserMenuVisible] = useState(false);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [buildingStats, setBuildingStats] = useState<Map<string, { total: number; occupied: number; vacant: number }>>(new Map());
   const [refreshing, setRefreshing] = useState(false);
@@ -66,6 +70,23 @@ export default function HomeScreen() {
   // 进入楼房管理
   const handleBuildingPress = (buildingId: string) => {
     router.push('/building', { buildingId });
+  };
+
+  // 退出登录 / 切换账号（都回到登录页；区别仅在确认文案）
+  const handleLogout = () => {
+    setUserMenuVisible(false);
+    Alert.alert('退出登录', '确定要退出当前账号吗？', [
+      { text: '取消', style: 'cancel' },
+      { text: '退出', style: 'destructive', onPress: () => { logout(); } },
+    ]);
+  };
+
+  const handleSwitchAccount = () => {
+    setUserMenuVisible(false);
+    Alert.alert('切换账号', '将退出当前账号并返回登录页，确定吗？', [
+      { text: '取消', style: 'cancel' },
+      { text: '切换', onPress: () => { logout(); } },
+    ]);
   };
 
   // 长按 → 弹出操作菜单
@@ -203,10 +224,21 @@ export default function HomeScreen() {
       >
         {/* 标题 */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>房屋管家</Text>
-          <Text style={styles.headerSubtitle}>
-            {buildings.length === 0 ? '点击下方按钮添加楼房' : `共管理 ${buildings.length} 栋楼房`}
-          </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerTitle}>房屋管家</Text>
+              <Text style={styles.headerSubtitle}>
+                {buildings.length === 0 ? '点击下方按钮添加楼房' : `共管理 ${buildings.length} 栋楼房`}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => setUserMenuVisible(true)} style={styles.userChip} activeOpacity={0.7}>
+              <FontAwesome6 name="circle-user" size={16} color="#6C63FF" />
+              <Text style={styles.userChipText} numberOfLines={1}>
+                {user?.username || '未登录'}
+              </Text>
+              <FontAwesome6 name="chevron-down" size={10} color="#636E72" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* 楼房列表 */}
@@ -394,6 +426,45 @@ export default function HomeScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* 用户菜单：切换账号 / 退出登录 */}
+      <Modal
+        visible={userMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setUserMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setUserMenuVisible(false)}
+        >
+          <View style={styles.actionSheet}>
+            <View style={styles.userMenuHeader}>
+              <FontAwesome6 name="circle-user" size={28} color="#6C63FF" />
+              <Text style={styles.userMenuName}>{user?.username || '未登录'}</Text>
+              <Text style={styles.userMenuHint}>当前登录账号</Text>
+            </View>
+            <TouchableOpacity style={[styles.actionItem, styles.userMenuItem]} onPress={handleSwitchAccount}>
+              <FontAwesome6 name="arrows-rotate" size={15} color="#2D3436" />
+              <Text style={styles.actionItemText}>切换账号</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionItem, styles.userMenuItem, styles.actionItemDanger]}
+              onPress={handleLogout}
+            >
+              <FontAwesome6 name="right-from-bracket" size={15} color="#E74C3C" />
+              <Text style={[styles.actionItemText, styles.actionItemTextDanger]}>退出登录</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemCancel]}
+              onPress={() => setUserMenuVisible(false)}
+            >
+              <Text style={styles.actionItemText}>取消</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </Screen>
   );
 }
@@ -419,6 +490,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#636E72',
     marginTop: 4,
+  },
+  userChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8E8EB',
+    maxWidth: 140,
+  },
+  userChipText: {
+    fontSize: 13,
+    color: '#2D3436',
+    fontWeight: '600',
+    flexShrink: 1,
+  },
+  userMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  userMenuHeader: {
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F3',
+    marginBottom: 8,
+  },
+  userMenuName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#2D3436',
+    marginTop: 8,
+  },
+  userMenuHint: {
+    fontSize: 12,
+    color: '#B2BEC3',
+    marginTop: 2,
   },
   // 楼房卡片
   buildingCard: {

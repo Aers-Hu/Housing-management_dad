@@ -7,9 +7,12 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-import json, os, sys
+import json, os, sys, copy
 from datetime import datetime, timedelta
 import calendar
+
+from api_client import (ClientConfig, ApiClient, NetworkError, ApiError,
+                        server_building_to_py, py_room_to_server_body)
 
 # ============================================================
 # 5套主题
@@ -269,50 +272,143 @@ def make_entry(parent, var=None, width=None, **kw):
 # 数据
 # ============================================================
 class DataStore:
-    def __init__(self):
-        self.path = os.path.join(get_app_dir(), "housing_data.json")
-        self.data = {"buildings": [], "theme": DEFAULT_THEME}
-        self._load()
+    """
+    服务器后端的数据存储（对外接口与原本地版本一致，UI 代码无需改动）。
+    - buildings / find / add / update / delete 走服务器 API
+    - theme 为本地偏好，存 client_config.json
+    - 断网时回退本地缓存（只读），写操作会提示需联网
+    """
+    def __init__(self, api):
+        self.api = api
+        self.cache_path = os.path.join(get_app_dir(), "housing_cache.json")
+        self._buildings = []      # Python 嵌套结构列表
+        self._snapshots = {}      # bid -> 上次服务器状态的深拷贝（用于 diff）
+        self.offline = False      # 当前是否处于离线（缓存）模式
+        self.load()
 
-    def _load(self):
-        if os.path.exists(self.path):
+    def load(self):
+        """从服务器拉取全部楼房（含房间），转换为 Python 嵌套结构。断网回退缓存。"""
+        try:
+            slist = self.api.list_buildings()
+            blds = []
+            for sb in slist:
+                detail = self.api.get_building(sb["id"])
+                blds.append(server_building_to_py(detail["building"], detail["rooms"]))
+            self._buildings = blds
+            self.offline = False
+            self._refresh_snapshots()
+            self._write_cache()
+        except NetworkError:
+            self._buildings = self._read_cache()
+            self._refresh_snapshots()
+            self.offline = True
+        return self._buildings
+
+    def _refresh_snapshots(self):
+        self._snapshots = {b["id"]: copy.deepcopy(b) for b in self._buildings}
+
+    def _write_cache(self):
+        try:
+            with open(self.cache_path, "w", encoding="utf-8") as f:
+                json.dump({"buildings": self._buildings}, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _read_cache(self):
+        if os.path.exists(self.cache_path):
             try:
-                with open(self.path, "r", encoding="utf-8") as f:
-                    self.data = json.load(f)
-            except:
-                self.data = {"buildings": [], "theme": DEFAULT_THEME}
-        if "theme" not in self.data:
-            self.data["theme"] = DEFAULT_THEME
-        # 迁移旧数据格式
-        migrate_all_data(self.data)
+                with open(self.cache_path, "r", encoding="utf-8") as f:
+                    return json.load(f).get("buildings", [])
+            except Exception:
+                pass
+        return []
 
     def save(self):
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
+        """改动已即时推送服务器，这里仅刷新本地缓存。"""
+        self._write_cache()
 
     @property
     def buildings(self):
-        return self.data.get("buildings", [])
+        return self._buildings
 
     @property
     def theme(self):
-        return self.data.get("theme", DEFAULT_THEME)
+        return self.api.cfg.theme or DEFAULT_THEME
 
     @theme.setter
     def theme(self, val):
-        self.data["theme"] = val; self.save()
+        self.api.cfg.theme = val
+        self.api.cfg.save()
 
     def add(self, b):
-        self.data.setdefault("buildings", []).append(b); self.save()
+        """新增楼房：POST 到服务器，回填服务器结构。需联网。"""
+        sb = self.api.create_building(b.get("name", ""), b.get("floors", 0),
+                                      b.get("rooms_per_floor", 0))
+        # 若设置了楼层标签，补一次 PUT
+        if b.get("floor_labels"):
+            self.api.update_building(sb["id"], {
+                "name": sb.get("name", ""),
+                "floorLabels": b["floor_labels"],
+            })
+        detail = self.api.get_building(sb["id"])
+        pb = server_building_to_py(detail["building"], detail["rooms"])
+        self._buildings.append(pb)
+        self._snapshots[pb["id"]] = copy.deepcopy(pb)
+        self._write_cache()
 
     def update(self, idx, b):
-        self.data["buildings"][idx] = b; self.save()
+        """
+        更新楼房。区分两类（对比上次服务器快照，因 UI 会原地修改对象）：
+        - 结构性变更(名称/层数/每层数/楼层标签)：PUT 楼房，重载该楼
+        - 房间内容变更：逐个比对 _sid，只 PUT 变化的房间
+        """
+        if idx < 0 or idx >= len(self._buildings):
+            return
+        bid = b["id"]
+        old = self._snapshots.get(bid, {})
+
+        structural = (
+            b.get("name") != old.get("name") or
+            b.get("floors") != old.get("floors") or
+            b.get("rooms_per_floor") != old.get("rooms_per_floor") or
+            b.get("floor_labels") != old.get("floor_labels")
+        )
+
+        if structural:
+            self.api.update_building(bid, {
+                "name": b.get("name", ""),
+                "floors": b.get("floors", 0),
+                "roomsPerFloor": b.get("rooms_per_floor", 0),
+                "floorLabels": b.get("floor_labels") or {},
+            })
+        else:
+            # 房间内容变更：找出有 _sid 且内容变化的房间，逐个推送
+            old_by_sid = {r.get("_sid"): r for r in old.get("rooms", []) if r.get("_sid")}
+            for r in b.get("rooms", []):
+                sid = r.get("_sid")
+                if not sid:
+                    continue
+                if old_by_sid.get(sid) != r:
+                    self.api.update_room(sid, py_room_to_server_body(r))
+
+        # 重载该楼，保证本地结构与服务器一致（含服务端补的房间）
+        detail = self.api.get_building(bid)
+        pb = server_building_to_py(detail["building"], detail["rooms"])
+        self._buildings[idx] = pb
+        self._snapshots[bid] = copy.deepcopy(pb)
+        self._write_cache()
 
     def delete(self, idx):
-        del self.data["buildings"][idx]; self.save()
+        if idx < 0 or idx >= len(self._buildings):
+            return
+        bid = self._buildings[idx]["id"]
+        self.api.delete_building(bid)
+        del self._buildings[idx]
+        self._snapshots.pop(bid, None)
+        self._write_cache()
 
     def find(self, bid):
-        for i, b in enumerate(self.buildings):
+        for i, b in enumerate(self._buildings):
             if b.get("id") == bid: return i, b
         return -1, None
 
@@ -946,6 +1042,115 @@ class TransferDialog(tk.Toplevel):
 # ============================================================
 # 主应用
 # ============================================================
+class LoginDialog(tk.Toplevel):
+    """登录/注册对话框（含服务器地址设置）。"""
+    def __init__(self, parent, api):
+        super().__init__(parent)
+        self.api = api
+        self.cfg = api.cfg
+        self.success = False
+        self.mode = "login"  # login / register
+
+        self.title("登录 - 房屋管家")
+        self.resizable(False, False)
+        self.configure(bg=C["bg"])
+        self.transient(parent)
+        self.grab_set()
+        self._ui()
+        self._center(parent)
+        # 关闭对话框视为取消
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+    def _center(self, p):
+        self.update_idletasks()
+        w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        try:
+            x = p.winfo_x() + (p.winfo_width() - w) // 2
+            y = p.winfo_y() + (p.winfo_height() - h) // 2
+            self.geometry(f"+{max(x,0)}+{max(y,0)}")
+        except Exception:
+            pass
+
+    def _ui(self):
+        pad = {"padx": 28}
+        tk.Label(self, text="🏠 房屋管家", font=("Microsoft YaHei UI", 18, "bold"),
+                 fg=C["primary"], bg=C["bg"]).pack(pady=(24, 4), **pad)
+        self.subtitle = tk.Label(self, text="登录后多设备同步数据",
+                                 font=FONT_SMALL, fg=C["text_secondary"], bg=C["bg"])
+        self.subtitle.pack(pady=(0, 16), **pad)
+
+        # 用户名
+        tk.Label(self, text="用户名", font=FONT_SMALL, fg=C["text_secondary"],
+                 bg=C["bg"]).pack(anchor=tk.W, **pad)
+        self.user_var = tk.StringVar(value=self.cfg.username)
+        make_entry(self, self.user_var, width=28).pack(pady=(2, 10), **pad)
+
+        # 密码
+        tk.Label(self, text="密码", font=FONT_SMALL, fg=C["text_secondary"],
+                 bg=C["bg"]).pack(anchor=tk.W, **pad)
+        self.pwd_var = tk.StringVar()
+        pwd_entry = make_entry(self, self.pwd_var, width=28, show="•")
+        pwd_entry.pack(pady=(2, 10), **pad)
+        pwd_entry.bind("<Return>", lambda e: self._submit())
+
+        # 服务器地址
+        tk.Label(self, text="服务器地址", font=FONT_SMALL, fg=C["text_secondary"],
+                 bg=C["bg"]).pack(anchor=tk.W, **pad)
+        self.server_var = tk.StringVar(value=self.cfg.server_url)
+        make_entry(self, self.server_var, width=28).pack(pady=(2, 16), **pad)
+
+        # 提交按钮
+        self.submit_btn = RoundedBtn(self, "登 录", command=self._submit,
+                                     width=300, height=40, canvas_bg=C["bg"])
+        self.submit_btn.pack(pady=(0, 10), **pad)
+
+        # 切换登录/注册
+        self.switch_lbl = tk.Label(self, text="没有账号？点此注册", font=FONT_SMALL,
+                                   fg=C["primary"], bg=C["bg"], cursor="hand2")
+        self.switch_lbl.pack(pady=(0, 22), **pad)
+        self.switch_lbl.bind("<Button-1>", lambda e: self._toggle_mode())
+
+    def _toggle_mode(self):
+        if self.mode == "login":
+            self.mode = "register"
+            self.title("注册 - 房屋管家")
+            self.subtitle.config(text="创建新账号")
+            self.submit_btn.txt = "注 册"; self.submit_btn._draw()
+            self.switch_lbl.config(text="已有账号？点此登录")
+        else:
+            self.mode = "login"
+            self.title("登录 - 房屋管家")
+            self.subtitle.config(text="登录后多设备同步数据")
+            self.submit_btn.txt = "登 录"; self.submit_btn._draw()
+            self.switch_lbl.config(text="没有账号？点此注册")
+
+    def _submit(self):
+        username = self.user_var.get().strip()
+        password = self.pwd_var.get()
+        if not username or not password:
+            messagebox.showwarning("提示", "请填写用户名和密码", parent=self)
+            return
+        # 先保存服务器地址
+        self.cfg.server_url = ClientConfig.normalize_url(self.server_var.get())
+        self.cfg.save()
+        try:
+            if self.mode == "login":
+                self.api.login(username, password)
+            else:
+                self.api.register(username, password)
+            self.success = True
+            self.destroy()
+        except NetworkError:
+            messagebox.showerror("连接失败",
+                                 "连不上服务器，请检查地址和网络是否正常。", parent=self)
+        except ApiError as e:
+            messagebox.showerror("失败", e.message, parent=self)
+
+    def _cancel(self):
+        self.success = False
+        self.destroy()
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -954,15 +1159,55 @@ class App(tk.Tk):
         self.minsize(860, 600)
         self.configure(bg=C["bg"])
 
-        self.dm = DataStore()
+        # 初始化 API 客户端 + 配置
+        self.cfg = ClientConfig(get_app_dir())
+        self.api = ApiClient(self.cfg)
+
+        # 先应用本地保存的主题（登录前界面也用对的配色）
+        self._apply_theme_only(self.cfg.theme or DEFAULT_THEME)
+
+        # 登录流程：有 token 先校验，失败/无 token 则弹登录框
+        if not self._ensure_login():
+            self.destroy()
+            return
+
+        self.dm = DataStore(self.api)
         self._apply_theme(self.dm.theme)
 
         self.nav = []
         self.main = tk.Frame(self, bg=C["bg"])
         self.main.pack(fill=tk.BOTH, expand=True)
 
+        if self.dm.offline:
+            messagebox.showwarning("离线模式",
+                "当前无法连接服务器，已加载本地缓存数据（只读）。\n"
+                "联网后重新打开程序即可同步。")
+
         self._show_home()
         self.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _ensure_login(self):
+        """确保已登录。返回 True=已登录，False=用户取消。"""
+        # 有 token 先尝试校验
+        if self.cfg.token:
+            try:
+                self.api.verify_token()
+                return True
+            except ApiError:
+                self.api.logout()  # token 失效
+            except NetworkError:
+                # 断网但有 token：允许进入（离线模式用缓存）
+                return True
+        # 弹登录框
+        dlg = LoginDialog(self, self.api)
+        self.wait_window(dlg)
+        return dlg.success
+
+    def _apply_theme_only(self, theme_name):
+        """仅切换配色全局变量，不写回 dm（登录前 dm 还不存在）。"""
+        global C
+        C = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
+        self.configure(bg=C["bg"])
 
     def _apply_theme(self, theme_name):
         global C
@@ -996,6 +1241,21 @@ class App(tk.Tk):
         tk.Label(lf, text="HOUSE MANAGEMENT", font=("Microsoft YaHei UI",8),
                  fg=C["text_dim"], bg=C["sidebar_bg"]).pack(anchor=tk.W)
         tk.Frame(sb, bg=C["divider"], height=1).pack(fill=tk.X, padx=22, pady=10)
+
+        # 用户状态栏：显示用户名，点击弹出菜单（切换账号/退出登录）
+        uf = tk.Frame(sb, bg=C["surface"], cursor="hand2")
+        uf.pack(fill=tk.X, padx=18, pady=(0, 8))
+        ui = tk.Frame(uf, bg=C["surface"])
+        ui.pack(fill=tk.X, padx=12, pady=10)
+        uname = self.cfg.username or "未登录"
+        tk.Label(ui, text="👤", font=("Segoe UI Emoji", 14),
+                 bg=C["surface"]).pack(side=tk.LEFT)
+        tk.Label(ui, text=uname, font=("Microsoft YaHei UI", 11, "bold"),
+                 fg=C["text"], bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(ui, text="▾", font=("Microsoft YaHei UI", 11),
+                 fg=C["text_secondary"], bg=C["surface"]).pack(side=tk.RIGHT)
+        for w in (uf, ui) + tuple(ui.winfo_children()):
+            w.bind("<Button-1>", lambda e: self._show_user_menu(e))
 
         sf = tk.Frame(sb, bg=C["sidebar_bg"]); sf.pack(fill=tk.X, padx=22, pady=8)
         blds = self.dm.buildings
@@ -1042,6 +1302,8 @@ class App(tk.Tk):
                    canvas_bg=C["sidebar_bg"]).pack(pady=(10, 20))
 
         ma = tk.Frame(self.main, bg=C["bg"]); ma.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 右键菜单：刷新数据（手机端更新后无需退出重登）
+        ma.bind("<Button-3>", self._show_context_menu)
         hd = tk.Frame(ma, bg=C["bg"]); hd.pack(fill=tk.X, padx=30, pady=(26,10))
         tk.Label(hd, text="我的楼房", font=FONT_TITLE,
                  fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT)
@@ -1068,6 +1330,65 @@ class App(tk.Tk):
 
     def _switch_theme(self, tn):
         self._apply_theme(tn); self._show_home()
+
+    # ====== 用户菜单 / 刷新 ======
+    def _show_user_menu(self, event):
+        """弹出用户菜单：刷新、切换账号、退出登录。"""
+        menu = tk.Menu(self, tearoff=0, font=FONT_BODY,
+                       bg=C["card"], fg=C["text"],
+                       activebackground=C["primary"], activeforeground=C["white"])
+        uname = self.cfg.username or "未登录"
+        menu.add_command(label=f"当前账号：{uname}", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="🔄 刷新数据", command=self._refresh_data)
+        menu.add_command(label="🔁 切换账号", command=lambda: self._relogin(switch=True))
+        menu.add_command(label="🚪 退出登录", command=lambda: self._relogin(switch=False))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _refresh_data(self):
+        """重新拉取服务器数据并重绘当前界面（手机端改了数据后，电脑端无需重登）。"""
+        try:
+            self.dm.load()
+            if self.dm.offline:
+                messagebox.showwarning("离线", "仍无法连接服务器，显示的是本地缓存。", parent=self)
+        except Exception as e:
+            messagebox.showerror("刷新失败", str(e), parent=self)
+            return
+        # 重绘当前页面
+        if self.nav:
+            self._clear(); self.nav[-1]()
+        else:
+            self._show_home()
+
+    def _show_context_menu(self, event):
+        """右键下拉菜单：刷新数据。"""
+        menu = tk.Menu(self, tearoff=0, font=FONT_BODY,
+                       bg=C["card"], fg=C["text"],
+                       activebackground=C["primary"], activeforeground=C["white"])
+        menu.add_command(label="🔄 刷新数据", command=self._refresh_data)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _relogin(self, switch):
+        """退出登录 / 切换账号：清 token 后重新弹登录框。"""
+        action = "切换账号" if switch else "退出登录"
+        if not messagebox.askyesno(action, f"确定要{action}吗？", parent=self):
+            return
+        self.api.logout()
+        dlg = LoginDialog(self, self.api)
+        self.wait_window(dlg)
+        if dlg.success:
+            # 重新登录成功：重建数据并回主页
+            self.dm = DataStore(self.api)
+            self._show_home()
+        else:
+            # 用户取消登录：关闭程序
+            self.destroy()
 
     def _add_building(self):
         BuildingDialog(self, lambda b: (self.dm.add(b), self._show_home()))

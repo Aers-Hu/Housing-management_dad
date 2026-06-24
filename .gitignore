@@ -51,6 +51,24 @@ ehthumbs.db
 # 数据文件（本地租客数据不上传）
 housing_data.json
 
+# Python 桌面客户端的本地配置与缓存（含 token、租客缓存，不上传）
+client_config.json
+housing_cache.json
+
+# SQLite 数据库（server 端租客数据，不上传）
+server/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# TLS 证书（密钥绝不上传）
+server/certs/
+*.pem
+*.key
+*.crt
+
 # 临时文件 / 日志
 *.log
 *.log.*
