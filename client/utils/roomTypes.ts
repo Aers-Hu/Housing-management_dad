@@ -8,6 +8,9 @@ export interface Building {
   roomsPerFloor: number; // 每层房间数
   createdAt: string;    // 创建时间 ISO
   floorLabels?: Record<number, string>; // 楼层号自定义显示，键为内部楼层，值为显示楼层号，如 { 1: "2" } 表示把第1层显示为"2楼"
+  ownerId?: string;       // 楼房归属账号
+  ownerUsername?: string; // 楼房归属账号的用户名（用于区分他人楼房）
+  permission?: 'owner' | 'write' | 'read'; // 当前用户对该楼的权限
 }
 
 // 单月房租提交记录

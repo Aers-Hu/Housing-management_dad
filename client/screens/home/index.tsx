@@ -17,11 +17,25 @@ import { Building, Room, getBuildingStats } from '@/utils/roomTypes';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { FontAwesome6 } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
+import {
+  requestAccess, getInbox, respondRequest, getGrantees,
+  setGranteeWrite, revokeGrantee, type AccessRequestItem, type GranteeItem,
+} from '@/utils/comm';
+import { NetworkError, ApiError } from '@/utils/api';
 
 export default function HomeScreen() {
   const router = useSafeRouter();
   const { user, logout } = useAuth();
   const [userMenuVisible, setUserMenuVisible] = useState(false);
+  // 通讯相关
+  const [requestModalVisible, setRequestModalVisible] = useState(false);
+  const [requestUsername, setRequestUsername] = useState('');
+  const [inboxVisible, setInboxVisible] = useState(false);
+  const [inboxList, setInboxList] = useState<AccessRequestItem[]>([]);
+  const [inboxCount, setInboxCount] = useState(0);
+  const [granteeVisible, setGranteeVisible] = useState(false);
+  const [granteeList, setGranteeList] = useState<GranteeItem[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [buildingStats, setBuildingStats] = useState<Map<string, { total: number; occupied: number; vacant: number }>>(new Map());
   const [refreshing, setRefreshing] = useState(false);
@@ -53,6 +67,14 @@ export default function HomeScreen() {
       stats.set(b.id, getBuildingStats(rooms, b.id));
     }
     setBuildingStats(stats);
+
+    // 拉取待处理申请数（失败不影响主流程）
+    try {
+      const reqs = await getInbox();
+      setInboxCount(reqs.length);
+    } catch {
+      // 离线/网络错误，忽略
+    }
   }, []);
 
   useFocusEffect(
@@ -60,6 +82,122 @@ export default function HomeScreen() {
       loadData();
     }, [loadData])
   );
+
+  // ---- 通讯：申请查看 ----
+  const submitRequest = async () => {
+    const name = requestUsername.trim();
+    if (!name) {
+      Toast.show({ type: 'error', text1: '请输入对方用户名' });
+      return;
+    }
+    try {
+      await requestAccess(name);
+      setRequestModalVisible(false);
+      setRequestUsername('');
+      Toast.show({ type: 'success', text1: '申请已发送', text2: `等待 ${name} 同意` });
+    } catch (e) {
+      let msg = '申请失败';
+      if (e instanceof NetworkError) msg = '连不上服务器';
+      else if (e instanceof ApiError) msg = e.message;
+      Toast.show({ type: 'error', text1: msg });
+    }
+  };
+
+  // ---- 通讯：消息箱 ----
+  const openInbox = async () => {
+    try {
+      const reqs = await getInbox();
+      setInboxList(reqs);
+      setInboxCount(reqs.length);
+      setInboxVisible(true);
+    } catch (e) {
+      const msg = e instanceof NetworkError ? '连不上服务器' : '加载消息失败';
+      Toast.show({ type: 'error', text1: msg });
+    }
+  };
+
+  const handleRespond = async (item: AccessRequestItem, approve: boolean) => {
+    try {
+      await respondRequest(item.id, approve);
+      const left = inboxList.filter((x) => x.id !== item.id);
+      setInboxList(left);
+      setInboxCount(left.length);
+      if (approve) {
+        Toast.show({
+          type: 'success',
+          text1: '已同意',
+          text2: `${item.requesterUsername} 现可查看（默认只读）`,
+        });
+      } else {
+        Toast.show({ type: 'success', text1: '已拒绝' });
+      }
+      loadData();
+    } catch (e) {
+      const msg = e instanceof NetworkError ? '连不上服务器' : '操作失败';
+      Toast.show({ type: 'error', text1: msg });
+    }
+  };
+
+  // ---- 通讯：编辑申请人权限 ----
+  const openGranteeEditor = async () => {
+    setUserMenuVisible(false);
+    try {
+      const list = await getGrantees();
+      setGranteeList(list);
+      setGranteeVisible(true);
+    } catch (e) {
+      const msg = e instanceof NetworkError ? '连不上服务器' : '加载失败';
+      Toast.show({ type: 'error', text1: msg });
+    }
+  };
+
+  // 切换某被授权人写权限：开启前弹窗确认
+  const toggleGranteeWrite = (item: GranteeItem) => {
+    const target = !item.canWrite;
+    const apply = async () => {
+      try {
+        await setGranteeWrite(item.granteeId, target);
+        setGranteeList((prev) =>
+          prev.map((g) => (g.granteeId === item.granteeId ? { ...g, canWrite: target } : g))
+        );
+      } catch (e) {
+        const msg = e instanceof NetworkError ? '连不上服务器' : '保存失败';
+        Toast.show({ type: 'error', text1: msg });
+      }
+    };
+    if (target) {
+      // 开启写权限（管理员）前确认
+      Alert.alert(
+        '确认授予管理员权限',
+        `是否提供给 <${item.granteeUsername}> 管理员权限？\n\n（管理员可修改、甚至删除你的楼房数据）`,
+        [
+          { text: '取消', style: 'cancel' },
+          { text: '确认授予', onPress: apply },
+        ]
+      );
+    } else {
+      apply();
+    }
+  };
+
+  const handleRevokeGrantee = (item: GranteeItem) => {
+    Alert.alert('撤销授权', `确定撤销 ${item.granteeUsername} 的查看权限吗？`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '撤销',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await revokeGrantee(item.granteeId);
+            setGranteeList((prev) => prev.filter((g) => g.granteeId !== item.granteeId));
+          } catch (e) {
+            const msg = e instanceof NetworkError ? '连不上服务器' : '撤销失败';
+            Toast.show({ type: 'error', text1: msg });
+          }
+        },
+      },
+    ]);
+  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -241,16 +379,44 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* 通讯栏：申请查看他人楼房 + 消息 */}
+        <View style={styles.commBar}>
+          <TouchableOpacity style={styles.commBtn} onPress={() => setRequestModalVisible(true)} activeOpacity={0.7}>
+            <FontAwesome6 name="magnifying-glass" size={13} color="#6C63FF" />
+            <Text style={styles.commBtnText}>申请查看他人楼房</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.commBtn, inboxCount > 0 && styles.commBtnAlert]}
+            onPress={openInbox}
+            activeOpacity={0.7}
+          >
+            <FontAwesome6 name="envelope" size={13} color={inboxCount > 0 ? '#FFFFFF' : '#636E72'} />
+            <Text style={[styles.commBtnText, inboxCount > 0 && { color: '#FFFFFF' }]}>
+              消息{inboxCount > 0 ? ` (${inboxCount})` : ''}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* 楼房列表 */}
-        {buildings.map((building) => (
+        {buildings.map((building) => {
+          const isMine = !building.permission || building.permission === 'owner';
+          return (
           <TouchableOpacity
             key={building.id}
-            style={styles.buildingCard}
+            style={[styles.buildingCard, !isMine && styles.buildingCardOther]}
             onPress={() => handleBuildingPress(building.id)}
             onLongPress={() => handleBuildingLongPress(building)}
             activeOpacity={0.7}
             delayLongPress={500}
           >
+            {!isMine && (
+              <View style={styles.otherTag}>
+                <FontAwesome6 name="users" size={10} color="#E17055" />
+                <Text style={styles.otherTagText}>
+                  来自 {building.ownerUsername || '?'} · {building.permission === 'read' ? '只读' : '可编辑'}
+                </Text>
+              </View>
+            )}
             <View style={styles.buildingHeader}>
               <View style={styles.buildingIcon}>
                 <Text style={styles.buildingIconText}>🏢</Text>
@@ -265,7 +431,8 @@ export default function HomeScreen() {
             </View>
             {renderStatsBar(building.id)}
           </TouchableOpacity>
-        ))}
+          );
+        })}
 
         {/* 添加按钮 */}
         <TouchableOpacity
@@ -445,6 +612,10 @@ export default function HomeScreen() {
               <Text style={styles.userMenuName}>{user?.username || '未登录'}</Text>
               <Text style={styles.userMenuHint}>当前登录账号</Text>
             </View>
+            <TouchableOpacity style={[styles.actionItem, styles.userMenuItem]} onPress={openGranteeEditor}>
+              <FontAwesome6 name="user-gear" size={15} color="#2D3436" />
+              <Text style={styles.actionItemText}>编辑申请人权限</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={[styles.actionItem, styles.userMenuItem]} onPress={handleSwitchAccount}>
               <FontAwesome6 name="arrows-rotate" size={15} color="#2D3436" />
               <Text style={styles.actionItemText}>切换账号</Text>
@@ -465,6 +636,137 @@ export default function HomeScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* 申请查看他人楼房 */}
+      <Modal
+        visible={requestModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRequestModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>申请查看他人楼房</Text>
+            <Text style={styles.modalDesc}>输入对方用户名，对方同意后你可查看其全部楼房</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={requestUsername}
+              onChangeText={setRequestUsername}
+              placeholder="对方的用户名"
+              placeholderTextColor="#B2BEC3"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={() => { setRequestModalVisible(false); setRequestUsername(''); }}
+              >
+                <Text style={styles.modalBtnCancelText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={submitRequest}>
+                <Text style={styles.modalBtnPrimaryText}>发送申请</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 消息箱：待处理申请 */}
+      <Modal
+        visible={inboxVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setInboxVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.sheetCard}>
+            <Text style={styles.modalTitle}>消息 · 待处理申请</Text>
+            {inboxList.length === 0 ? (
+              <Text style={styles.emptyHint}>暂无待处理申请</Text>
+            ) : (
+              inboxList.map((item) => (
+                <View key={item.id} style={styles.inboxItem}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.nameRow}>
+                      <FontAwesome6 name="circle-user" size={13} color="#6C63FF" />
+                      <Text style={styles.inboxName}>{item.requesterUsername}</Text>
+                    </View>
+                    <Text style={styles.inboxDesc}>申请查看你的全部楼房</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.inboxBtn, { backgroundColor: '#00B894' }]}
+                    onPress={() => handleRespond(item, true)}
+                  >
+                    <Text style={styles.inboxBtnText}>同意</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.inboxBtn, { backgroundColor: '#E74C3C' }]}
+                    onPress={() => handleRespond(item, false)}
+                  >
+                    <Text style={styles.inboxBtnText}>拒绝</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemCancel]}
+              onPress={() => setInboxVisible(false)}
+            >
+              <Text style={styles.actionItemText}>关闭</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 编辑申请人权限 */}
+      <Modal
+        visible={granteeVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setGranteeVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.sheetCard}>
+            <Text style={styles.modalTitle}>编辑申请人权限</Text>
+            <Text style={styles.modalDesc}>
+              读权限默认开启；开启「写权限」即授予管理员权限（可改可删）
+            </Text>
+            {granteeList.length === 0 ? (
+              <Text style={styles.emptyHint}>还没有人被你授权查看</Text>
+            ) : (
+              granteeList.map((g) => (
+                <View key={g.granteeId} style={styles.granteeItem}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.nameRow}>
+                      <FontAwesome6 name="circle-user" size={13} color="#6C63FF" />
+                      <Text style={styles.inboxName}>{g.granteeUsername}</Text>
+                    </View>
+                    <Text style={styles.inboxDesc}>✓ 读权限（默认）</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.writeToggle, g.canWrite && styles.writeToggleOn]}
+                    onPress={() => toggleGranteeWrite(g)}
+                  >
+                    <Text style={[styles.writeToggleText, g.canWrite && { color: '#FFFFFF' }]}>
+                      {g.canWrite ? '✓ 写权限' : '写权限'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleRevokeGrantee(g)} style={styles.revokeBtn}>
+                    <Text style={styles.revokeText}>撤销</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemCancel]}
+              onPress={() => setGranteeVisible(false)}
+            >
+              <Text style={styles.actionItemText}>关闭</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -475,6 +777,185 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
+  },
+  // 通讯栏
+  commBar: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 16,
+  },
+  commBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8E8EB',
+  },
+  commBtnAlert: {
+    backgroundColor: '#FDCB6E',
+    borderColor: '#FDCB6E',
+  },
+  commBtnText: {
+    fontSize: 13,
+    color: '#636E72',
+    fontWeight: '600',
+  },
+  // 他人楼房标识
+  buildingCardOther: {
+    borderWidth: 1.5,
+    borderColor: '#FAB1A0',
+  },
+  otherTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
+  },
+  otherTagText: {
+    fontSize: 12,
+    color: '#E17055',
+    fontWeight: '600',
+  },
+  // 通用弹窗
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 22,
+    marginHorizontal: 32,
+    alignSelf: 'center',
+    width: '82%',
+  },
+  sheetCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    marginTop: 'auto',
+    maxHeight: '80%',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#2D3436',
+    marginBottom: 8,
+  },
+  modalDesc: {
+    fontSize: 13,
+    color: '#636E72',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  modalInput: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E8E8EB',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#2D3436',
+    marginBottom: 16,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalBtnCancel: {
+    backgroundColor: '#F0F0F3',
+  },
+  modalBtnCancelText: {
+    color: '#636E72',
+    fontWeight: '600',
+  },
+  modalBtnPrimary: {
+    backgroundColor: '#6C63FF',
+  },
+  modalBtnPrimaryText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  emptyHint: {
+    fontSize: 14,
+    color: '#B2BEC3',
+    textAlign: 'center',
+    paddingVertical: 30,
+  },
+  inboxItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F3',
+  },
+  inboxName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  inboxDesc: {
+    fontSize: 12,
+    color: '#636E72',
+    marginTop: 2,
+  },
+  inboxBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  inboxBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  granteeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F3',
+  },
+  writeToggle: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F0F0F3',
+    borderWidth: 1,
+    borderColor: '#E8E8EB',
+  },
+  writeToggleOn: {
+    backgroundColor: '#6C63FF',
+    borderColor: '#6C63FF',
+  },
+  writeToggleText: {
+    fontSize: 13,
+    color: '#636E72',
+    fontWeight: '600',
+  },
+  revokeBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  revokeText: {
+    fontSize: 13,
+    color: '#E74C3C',
   },
   // 头部
   header: {

@@ -1,4 +1,4 @@
-import type { Building, Room, Grant, User, RentRecord } from '../types.ts';
+import type { Building, Room, AccessRequest, AccountGrant, User, RentRecord } from '../types.ts';
 
 // ============================================================
 // DB 行(snake_case) <-> API 对象(camelCase) 互转
@@ -41,12 +41,23 @@ export function rowToRoom(r: any): Room {
   };
 }
 
-export function rowToGrant(r: any): Grant {
+export function rowToAccessRequest(r: any): AccessRequest {
   return {
     id: r.id,
-    buildingId: r.building_id,
+    requesterId: r.requester_id,
+    ownerId: r.owner_id,
+    status: r.status,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+export function rowToAccountGrant(r: any): AccountGrant {
+  return {
+    id: r.id,
+    ownerId: r.owner_id,
     granteeId: r.grantee_id,
-    permission: r.permission,
+    canWrite: !!r.can_write,
     createdAt: r.created_at,
   };
 }

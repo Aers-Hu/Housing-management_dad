@@ -50,17 +50,29 @@ export interface Building {
   floorLabels?: Record<string, string>; // 楼层显示号自定义，键为内部楼层(字符串)
 }
 
-// ---- 授权（主账号+授权模型）----
-// owner 把某栋楼授权给另一个账号，权限为只读或可编辑
-export type GrantPermission = 'read' | 'edit';
+// ---- 账号级访问申请 ----
+export type RequestStatus = 'pending' | 'approved' | 'rejected';
 
-export interface Grant {
+export interface AccessRequest {
   id: string;
-  buildingId: string;     // 被授权的楼房
-  granteeId: string;      // 被授权的账号
-  permission: GrantPermission;
+  requesterId: string;       // 申请人
+  ownerId: string;           // 被申请的账号
+  status: RequestStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---- 账号级授权（owner 把整个账号授权给 grantee）----
+export interface AccountGrant {
+  id: string;
+  ownerId: string;
+  granteeId: string;
+  canWrite: boolean;         // 读默认有；写需 owner 手动开启（含删楼）
   createdAt: string;
 }
+
+// 当前用户对某楼房的权限
+export type AccessLevel = 'owner' | 'write' | 'read' | null;
 
 // ---- 楼房 + 房间打包（同步用）----
 export interface BuildingWithRooms extends Building {

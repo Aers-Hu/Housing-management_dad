@@ -155,6 +155,36 @@ class ApiClient:
     def update_room(self, room_sid, body):
         return self._request("PUT", f"/rooms/{room_sid}", body)["room"]
 
+    # ---- 账号级通讯：申请查看 + 授权管理 ----
+    def request_access(self, username):
+        """申请查看某用户(按用户名)的全部楼房。"""
+        return self._request("POST", "/access-requests", {"username": username})["request"]
+
+    def inbox(self):
+        """我收到的待处理申请列表（消息状态栏）。"""
+        return self._request("GET", "/access-requests/inbox")["requests"]
+
+    def outbox(self):
+        """我发出的申请列表（含状态）。"""
+        return self._request("GET", "/access-requests/outbox")["requests"]
+
+    def respond_request(self, request_id, approve):
+        """同意/拒绝某申请。"""
+        action = "approve" if approve else "reject"
+        return self._request("POST", f"/access-requests/{request_id}/respond", {"action": action})
+
+    def list_grantees(self):
+        """我授权出去的人列表（编辑权限用）。"""
+        return self._request("GET", "/grantees")["grantees"]
+
+    def set_grantee_write(self, grantee_id, can_write):
+        """设置某被授权人的写权限。"""
+        return self._request("PUT", f"/grantees/{grantee_id}", {"canWrite": bool(can_write)})
+
+    def revoke_grantee(self, grantee_id):
+        """撤销某被授权人。"""
+        self._request("DELETE", f"/grantees/{grantee_id}")
+
 
 # ============================================================
 # 数据模型转换：服务器扁平模型 <-> Python 嵌套模型

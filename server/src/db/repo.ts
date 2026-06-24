@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { db } from './index.ts';
-import { rowToBuilding, rowToRoom, rowToGrant, rowToUser } from './mappers.ts';
-import type { Building, Room, Grant, User, GrantPermission } from '../types.ts';
+import { rowToBuilding, rowToRoom, rowToAccessRequest, rowToAccountGrant, rowToUser } from './mappers.ts';
+import type { Building, Room, AccessRequest, AccountGrant, User, AccessLevel } from '../types.ts';
 
 const genId = (prefix: string) => `${prefix}_${randomUUID()}`;
 
@@ -40,21 +40,35 @@ export const Users = {
 // Buildings
 // ============================================================
 export const Buildings = {
-  // 列出某用户「拥有的 + 被授权的」楼房
-  listAccessible(userId: string): (Building & { permission: GrantPermission | 'owner' })[] {
+  // 列出某用户「拥有的 + 被授权账号的全部」楼房，带 owner 用户名和权限标识
+  listAccessible(userId: string): (Building & { permission: AccessLevel; ownerUsername: string })[] {
     const owned: any[] = db
-      .prepare('SELECT * FROM buildings WHERE owner_id = ? ORDER BY created_at')
+      .prepare(
+        `SELECT b.*, u.username AS _owner_name FROM buildings b
+         JOIN users u ON u.id = b.owner_id
+         WHERE b.owner_id = ? ORDER BY b.created_at`
+      )
       .all(userId);
+    // 被授权账号的全部楼房（账号级 account_grants）
     const granted: any[] = db
       .prepare(
-        `SELECT b.*, g.permission AS _perm FROM buildings b
-         JOIN grants g ON g.building_id = b.id
+        `SELECT b.*, u.username AS _owner_name, g.can_write AS _can_write FROM buildings b
+         JOIN account_grants g ON g.owner_id = b.owner_id
+         JOIN users u ON u.id = b.owner_id
          WHERE g.grantee_id = ? ORDER BY b.created_at`
       )
       .all(userId);
     return [
-      ...owned.map((r) => ({ ...rowToBuilding(r), permission: 'owner' as const })),
-      ...granted.map((r) => ({ ...rowToBuilding(r), permission: r._perm as GrantPermission })),
+      ...owned.map((r) => ({
+        ...rowToBuilding(r),
+        permission: 'owner' as const,
+        ownerUsername: r._owner_name,
+      })),
+      ...granted.map((r) => ({
+        ...rowToBuilding(r),
+        permission: (r._can_write ? 'write' : 'read') as AccessLevel,
+        ownerUsername: r._owner_name,
+      })),
     ];
   },
 
@@ -122,18 +136,20 @@ export const Buildings = {
   },
 
   delete(id: string): void {
-    db.prepare('DELETE FROM buildings WHERE id = ?').run(id); // 级联删 rooms / grants
+    db.prepare('DELETE FROM buildings WHERE id = ?').run(id); // 级联删 rooms
   },
 
-  // 判断用户对某楼房的权限：owner / edit / read / null(无权)
-  accessLevel(userId: string, buildingId: string): 'owner' | GrantPermission | null {
+  // 判断用户对某楼房的权限：owner / write / read / null(无权)
+  // 账号级：看楼房 owner 是否把整个账号授权给了该用户
+  accessLevel(userId: string, buildingId: string): AccessLevel {
     const b = this.findById(buildingId);
     if (!b) return null;
     if (b.ownerId === userId) return 'owner';
     const g: any = db
-      .prepare('SELECT permission FROM grants WHERE building_id = ? AND grantee_id = ?')
-      .get(buildingId, userId);
-    return g ? (g.permission as GrantPermission) : null;
+      .prepare('SELECT can_write FROM account_grants WHERE owner_id = ? AND grantee_id = ?')
+      .get(b.ownerId, userId);
+    if (!g) return null;
+    return g.can_write ? 'write' : 'read';
   },
 };
 
@@ -192,31 +208,103 @@ export const Rooms = {
 };
 
 // ============================================================
-// Grants（授权）
+// AccessRequests（账号级访问申请）
 // ============================================================
-export const Grants = {
-  listForBuilding(buildingId: string): Grant[] {
-    const rows: any[] = db.prepare('SELECT * FROM grants WHERE building_id = ?').all(buildingId);
-    return rows.map(rowToGrant);
+export const AccessRequests = {
+  // 发起申请（同一对 requester→owner 已存在则复用，重置为 pending）
+  create(requesterId: string, ownerId: string): AccessRequest {
+    const id = genId('req');
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO access_requests (id, requester_id, owner_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'pending', ?, ?)
+       ON CONFLICT(requester_id, owner_id)
+       DO UPDATE SET status = 'pending', updated_at = excluded.updated_at`
+    ).run(id, requesterId, ownerId, now, now);
+    const r: any = db
+      .prepare('SELECT * FROM access_requests WHERE requester_id = ? AND owner_id = ?')
+      .get(requesterId, ownerId);
+    return rowToAccessRequest(r);
   },
-  upsert(buildingId: string, granteeId: string, permission: GrantPermission): Grant {
-    const id = genId('grant');
+
+  findById(id: string): AccessRequest | null {
+    const r: any = db.prepare('SELECT * FROM access_requests WHERE id = ?').get(id);
+    return r ? rowToAccessRequest(r) : null;
+  },
+
+  // 我收到的待处理申请（带申请人用户名）
+  inboxFor(ownerId: string): (AccessRequest & { requesterUsername: string })[] {
+    const rows: any[] = db
+      .prepare(
+        `SELECT r.*, u.username AS _req_name FROM access_requests r
+         JOIN users u ON u.id = r.requester_id
+         WHERE r.owner_id = ? AND r.status = 'pending' ORDER BY r.created_at DESC`
+      )
+      .all(ownerId);
+    return rows.map((r) => ({ ...rowToAccessRequest(r), requesterUsername: r._req_name }));
+  },
+
+  // 我发出的申请（带被申请账号用户名）
+  outboxFor(requesterId: string): (AccessRequest & { ownerUsername: string })[] {
+    const rows: any[] = db
+      .prepare(
+        `SELECT r.*, u.username AS _owner_name FROM access_requests r
+         JOIN users u ON u.id = r.owner_id
+         WHERE r.requester_id = ? ORDER BY r.created_at DESC`
+      )
+      .all(requesterId);
+    return rows.map((r) => ({ ...rowToAccessRequest(r), ownerUsername: r._owner_name }));
+  },
+
+  setStatus(id: string, status: 'approved' | 'rejected'): void {
+    db.prepare('UPDATE access_requests SET status = ?, updated_at = ? WHERE id = ?')
+      .run(status, new Date().toISOString(), id);
+  },
+};
+
+// ============================================================
+// AccountGrants（账号级授权）
+// ============================================================
+export const AccountGrants = {
+  // 同意申请时创建授权（默认只读）
+  grant(ownerId: string, granteeId: string, canWrite = false): AccountGrant {
+    const id = genId('agrant');
     const createdAt = new Date().toISOString();
     db.prepare(
-      `INSERT INTO grants (id, building_id, grantee_id, permission, created_at)
+      `INSERT INTO account_grants (id, owner_id, grantee_id, can_write, created_at)
        VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(building_id, grantee_id) DO UPDATE SET permission = excluded.permission`
-    ).run(id, buildingId, granteeId, permission, createdAt);
-    const r: any = db
-      .prepare('SELECT * FROM grants WHERE building_id = ? AND grantee_id = ?')
-      .get(buildingId, granteeId);
-    return rowToGrant(r);
+       ON CONFLICT(owner_id, grantee_id) DO UPDATE SET can_write = excluded.can_write`
+    ).run(id, ownerId, granteeId, canWrite ? 1 : 0, createdAt);
+    return this.find(ownerId, granteeId)!;
   },
-  revoke(buildingId: string, granteeId: string): void {
-    db.prepare('DELETE FROM grants WHERE building_id = ? AND grantee_id = ?').run(
-      buildingId,
-      granteeId
-    );
+
+  find(ownerId: string, granteeId: string): AccountGrant | null {
+    const r: any = db
+      .prepare('SELECT * FROM account_grants WHERE owner_id = ? AND grantee_id = ?')
+      .get(ownerId, granteeId);
+    return r ? rowToAccountGrant(r) : null;
+  },
+
+  // 我授权出去的人（带被授权人用户名）
+  granteesOf(ownerId: string): (AccountGrant & { granteeUsername: string })[] {
+    const rows: any[] = db
+      .prepare(
+        `SELECT g.*, u.username AS _grantee_name FROM account_grants g
+         JOIN users u ON u.id = g.grantee_id
+         WHERE g.owner_id = ? ORDER BY g.created_at`
+      )
+      .all(ownerId);
+    return rows.map((r) => ({ ...rowToAccountGrant(r), granteeUsername: r._grantee_name }));
+  },
+
+  setWrite(ownerId: string, granteeId: string, canWrite: boolean): void {
+    db.prepare('UPDATE account_grants SET can_write = ? WHERE owner_id = ? AND grantee_id = ?')
+      .run(canWrite ? 1 : 0, ownerId, granteeId);
+  },
+
+  revoke(ownerId: string, granteeId: string): void {
+    db.prepare('DELETE FROM account_grants WHERE owner_id = ? AND grantee_id = ?')
+      .run(ownerId, granteeId);
   },
 };
 

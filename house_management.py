@@ -6,7 +6,7 @@
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import json, os, sys, copy
 from datetime import datetime, timedelta
 import calendar
@@ -293,7 +293,11 @@ class DataStore:
             blds = []
             for sb in slist:
                 detail = self.api.get_building(sb["id"])
-                blds.append(server_building_to_py(detail["building"], detail["rooms"]))
+                pb = server_building_to_py(detail["building"], detail["rooms"])
+                # 附加 owner 信息，用于区分"自己的"和"他人的"楼房
+                pb["_owner_username"] = sb.get("ownerUsername", "")
+                pb["_permission"] = sb.get("permission", "owner")  # owner/write/read
+                blds.append(pb)
             self._buildings = blds
             self.offline = False
             self._refresh_snapshots()
@@ -1042,6 +1046,197 @@ class TransferDialog(tk.Toplevel):
 # ============================================================
 # 主应用
 # ============================================================
+class InboxDialog(tk.Toplevel):
+    """消息箱：列出收到的待处理申请，可同意/拒绝。"""
+    def __init__(self, parent, api, requests, on_done=None):
+        super().__init__(parent)
+        self.api = api
+        self.requests = list(requests)
+        self.on_done = on_done
+        self.changed = False
+
+        self.title("消息 - 待处理申请")
+        self.configure(bg=C["bg"])
+        self.geometry("420x460")
+        self.transient(parent)
+        self.grab_set()
+        self._ui()
+        self._center(parent)
+
+    def _center(self, p):
+        self.update_idletasks()
+        try:
+            x = p.winfo_x() + (p.winfo_width() - self.winfo_width()) // 2
+            y = p.winfo_y() + (p.winfo_height() - self.winfo_height()) // 2
+            self.geometry(f"+{max(x,0)}+{max(y,0)}")
+        except Exception:
+            pass
+
+    def _ui(self):
+        tk.Label(self, text="📬 收到的查看申请", font=FONT_HEADER,
+                 fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(18, 10))
+        self.body = tk.Frame(self, bg=C["bg"])
+        self.body.pack(fill=tk.BOTH, expand=True, padx=20)
+        self._render()
+        RoundedBtn(self, "关闭", command=self._close,
+                   bg=C["surface"], fg=C["text"], width=120, height=36,
+                   canvas_bg=C["bg"]).pack(pady=14)
+
+    def _render(self):
+        for w in self.body.winfo_children():
+            w.destroy()
+        if not self.requests:
+            tk.Label(self.body, text="暂无待处理申请", font=FONT_BODY,
+                     fg=C["text_secondary"], bg=C["bg"]).pack(pady=40)
+            return
+        for r in self.requests:
+            card = tk.Frame(self.body, bg=C["card"],
+                            highlightbackground=C["border"], highlightthickness=1)
+            card.pack(fill=tk.X, pady=6)
+            inn = tk.Frame(card, bg=C["card"]); inn.pack(fill=tk.X, padx=14, pady=12)
+            tk.Label(inn, text=f"👤 {r.get('requesterUsername','?')}",
+                     font=("Microsoft YaHei UI", 12, "bold"),
+                     fg=C["text"], bg=C["card"]).pack(anchor=tk.W)
+            tk.Label(inn, text="申请查看你的全部楼房", font=FONT_SMALL,
+                     fg=C["text_secondary"], bg=C["card"]).pack(anchor=tk.W, pady=(2, 8))
+            bf = tk.Frame(inn, bg=C["card"]); bf.pack(fill=tk.X)
+            RoundedBtn(bf, "✓ 同意", command=lambda rr=r: self._respond(rr, True),
+                       bg=C["success"], width=110, height=34, canvas_bg=C["card"]).pack(side=tk.LEFT, padx=(0, 8))
+            RoundedBtn(bf, "✕ 拒绝", command=lambda rr=r: self._respond(rr, False),
+                       bg=C["danger"], width=110, height=34, canvas_bg=C["card"]).pack(side=tk.LEFT)
+
+    def _respond(self, r, approve):
+        try:
+            self.api.respond_request(r["id"], approve)
+            self.changed = True
+            self.requests = [x for x in self.requests if x["id"] != r["id"]]
+            self._render()
+            if approve:
+                messagebox.showinfo("已同意",
+                    f"已同意「{r.get('requesterUsername','?')}」查看你的楼房（默认只读）。\n"
+                    "如需给写权限，请在「编辑申请人权限」里开启。", parent=self)
+        except NetworkError:
+            messagebox.showerror("连接失败", "连不上服务器，请检查网络。", parent=self)
+        except ApiError as e:
+            messagebox.showerror("操作失败", e.message, parent=self)
+
+    def _close(self):
+        self.destroy()
+        if self.changed and self.on_done:
+            self.on_done()
+
+
+class GranteePermDialog(tk.Toplevel):
+    """编辑申请人权限：勾选每个被授权人的写权限（读默认有）。"""
+    def __init__(self, parent, api, grantees):
+        super().__init__(parent)
+        self.api = api
+        self.grantees = list(grantees)
+        self.vars = {}  # grantee_id -> BooleanVar(can_write)
+
+        self.title("编辑申请人权限")
+        self.configure(bg=C["bg"])
+        self.geometry("440x480")
+        self.transient(parent)
+        self.grab_set()
+        self._ui()
+        self._center(parent)
+
+    def _center(self, p):
+        self.update_idletasks()
+        try:
+            x = p.winfo_x() + (p.winfo_width() - self.winfo_width()) // 2
+            y = p.winfo_y() + (p.winfo_height() - self.winfo_height()) // 2
+            self.geometry(f"+{max(x,0)}+{max(y,0)}")
+        except Exception:
+            pass
+
+    def _ui(self):
+        tk.Label(self, text="🔧 申请人权限管理", font=FONT_HEADER,
+                 fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(18, 4))
+        tk.Label(self, text="读权限默认开启；勾选「写权限」即授予管理员权限（含删楼）。",
+                 font=FONT_SMALL, fg=C["text_secondary"], bg=C["bg"],
+                 wraplength=400, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(0, 10))
+        body = tk.Frame(self, bg=C["bg"]); body.pack(fill=tk.BOTH, expand=True, padx=20)
+
+        if not self.grantees:
+            tk.Label(body, text="还没有人被你授权查看", font=FONT_BODY,
+                     fg=C["text_secondary"], bg=C["bg"]).pack(pady=40)
+        else:
+            for g in self.grantees:
+                gid = g["granteeId"]
+                card = tk.Frame(body, bg=C["card"],
+                                highlightbackground=C["border"], highlightthickness=1)
+                card.pack(fill=tk.X, pady=6)
+                inn = tk.Frame(card, bg=C["card"]); inn.pack(fill=tk.X, padx=14, pady=12)
+                row = tk.Frame(inn, bg=C["card"]); row.pack(fill=tk.X)
+                tk.Label(row, text=f"👤 {g.get('granteeUsername','?')}",
+                         font=("Microsoft YaHei UI", 12, "bold"),
+                         fg=C["text"], bg=C["card"]).pack(side=tk.LEFT)
+                # 撤销按钮
+                tk.Button(row, text="撤销", font=FONT_SMALL, relief=tk.FLAT, bd=0,
+                          bg=C["card"], fg=C["danger"], cursor="hand2",
+                          activebackground=C["card_hover"],
+                          command=lambda gg=g: self._revoke(gg)).pack(side=tk.RIGHT)
+                # 读（固定开启，不可取消）
+                tk.Label(inn, text="✓ 读权限（默认开启）", font=FONT_SMALL,
+                         fg=C["success"], bg=C["card"]).pack(anchor=tk.W, pady=(6, 2))
+                # 写权限勾选
+                var = tk.BooleanVar(value=bool(g.get("canWrite")))
+                self.vars[gid] = var
+                tk.Checkbutton(inn, text="写权限（管理员，可改可删）", variable=var,
+                               font=FONT_SMALL, fg=C["text"], bg=C["card"],
+                               selectcolor=C["surface"], activebackground=C["card"],
+                               anchor=tk.W).pack(anchor=tk.W)
+
+            RoundedBtn(self, "保存", command=self._save,
+                       bg=C["primary"], width=160, height=40,
+                       canvas_bg=C["bg"]).pack(pady=10)
+
+        RoundedBtn(self, "关闭", command=self.destroy,
+                   bg=C["surface"], fg=C["text"], width=120, height=34,
+                   canvas_bg=C["bg"]).pack(pady=(0, 14))
+
+    def _revoke(self, g):
+        if not messagebox.askyesno("撤销授权",
+                f"确定撤销「{g.get('granteeUsername','?')}」的查看权限吗？", parent=self):
+            return
+        try:
+            self.api.revoke_grantee(g["granteeId"])
+            self.grantees = [x for x in self.grantees if x["granteeId"] != g["granteeId"]]
+            # 重建界面
+            for w in self.winfo_children():
+                w.destroy()
+            self._ui()
+        except (NetworkError, ApiError) as e:
+            messagebox.showerror("撤销失败", getattr(e, "message", str(e)), parent=self)
+
+    def _save(self):
+        # 找出要开启写权限的人，逐个确认弹窗
+        for g in self.grantees:
+            gid = g["granteeId"]
+            new_write = self.vars[gid].get()
+            old_write = bool(g.get("canWrite"))
+            if new_write == old_write:
+                continue
+            if new_write:
+                # 开启写权限前弹窗确认
+                if not messagebox.askyesno("确认授予管理员权限",
+                        f"是否提供给 <{g.get('granteeUsername','?')}> 管理员权限？\n\n"
+                        "（管理员可修改、甚至删除你的楼房数据）", parent=self):
+                    # 用户取消，恢复勾选状态
+                    self.vars[gid].set(False)
+                    continue
+            try:
+                self.api.set_grantee_write(gid, new_write)
+                g["canWrite"] = new_write
+            except (NetworkError, ApiError) as e:
+                messagebox.showerror("保存失败", getattr(e, "message", str(e)), parent=self)
+                return
+        messagebox.showinfo("已保存", "权限设置已更新。", parent=self)
+        self.destroy()
+
+
 class LoginDialog(tk.Toplevel):
     """登录/注册对话框（含服务器地址设置）。"""
     def __init__(self, parent, api):
@@ -1299,7 +1494,24 @@ class App(tk.Tk):
 
         RoundedBtn(sb, "＋ 添加楼房", command=self._add_building,
                    bg=C["primary"], width=206, height=42,
-                   canvas_bg=C["sidebar_bg"]).pack(pady=(10, 20))
+                   canvas_bg=C["sidebar_bg"]).pack(pady=(10, 6))
+
+        # 申请查看其他用户的楼房
+        RoundedBtn(sb, "🔍 申请查看他人楼房", command=self._request_access_dialog,
+                   bg=C["surface"], fg=C["text"], width=206, height=38,
+                   canvas_bg=C["sidebar_bg"]).pack(pady=(0, 6))
+
+        # 消息状态栏（待处理申请数）
+        try:
+            pending = len(self.api.inbox()) if not self.dm.offline else 0
+        except Exception:
+            pending = 0
+        msg_label = f"📬 消息 ({pending})" if pending else "📭 消息"
+        msg_bg = C["warning"] if pending else C["surface"]
+        msg_fg = C["white"] if pending else C["text"]
+        RoundedBtn(sb, msg_label, command=self._show_inbox,
+                   bg=msg_bg, fg=msg_fg, width=206, height=38,
+                   canvas_bg=C["sidebar_bg"]).pack(pady=(0, 20))
 
         ma = tk.Frame(self.main, bg=C["bg"]); ma.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         # 右键菜单：刷新数据（手机端更新后无需退出重登）
@@ -1341,6 +1553,7 @@ class App(tk.Tk):
         menu.add_command(label=f"当前账号：{uname}", state="disabled")
         menu.add_separator()
         menu.add_command(label="🔄 刷新数据", command=self._refresh_data)
+        menu.add_command(label="🔧 编辑申请人权限", command=self._edit_grantees_dialog)
         menu.add_command(label="🔁 切换账号", command=lambda: self._relogin(switch=True))
         menu.add_command(label="🚪 退出登录", command=lambda: self._relogin(switch=False))
         try:
@@ -1362,6 +1575,59 @@ class App(tk.Tk):
             self._clear(); self.nav[-1]()
         else:
             self._show_home()
+
+    # ====== 账号级通讯：申请查看 / 消息箱 / 编辑权限 ======
+    def _request_access_dialog(self):
+        """申请查看其他用户的楼房（输入对方用户名）。"""
+        if self.dm.offline:
+            messagebox.showwarning("离线", "离线状态无法发起申请，请联网后重试。", parent=self)
+            return
+        name = simpledialog.askstring("申请查看他人楼房",
+                                      "请输入对方的用户名：", parent=self)
+        if not name or not name.strip():
+            return
+        try:
+            self.api.request_access(name.strip())
+            messagebox.showinfo("申请已发送",
+                                f"已向「{name.strip()}」发送查看申请，\n等待对方在其消息栏同意。", parent=self)
+        except NetworkError:
+            messagebox.showerror("连接失败", "连不上服务器，请检查网络。", parent=self)
+        except ApiError as e:
+            messagebox.showerror("申请失败", e.message, parent=self)
+
+    def _show_inbox(self):
+        """消息状态栏：显示收到的待处理申请，可同意/拒绝。"""
+        if self.dm.offline:
+            messagebox.showwarning("离线", "离线状态无法查看消息，请联网后重试。", parent=self)
+            return
+        try:
+            requests = self.api.inbox()
+        except NetworkError:
+            messagebox.showerror("连接失败", "连不上服务器，请检查网络。", parent=self)
+            return
+        except ApiError as e:
+            messagebox.showerror("加载失败", e.message, parent=self)
+            return
+        InboxDialog(self, self.api, requests, on_done=self._after_inbox)
+
+    def _after_inbox(self):
+        # 处理完申请后刷新数据（新授权的人可能产生可见楼房变化）
+        self._refresh_data()
+
+    def _edit_grantees_dialog(self):
+        """编辑申请人权限：列出被授权人，勾选读/写权限。"""
+        if self.dm.offline:
+            messagebox.showwarning("离线", "离线状态无法编辑权限，请联网后重试。", parent=self)
+            return
+        try:
+            grantees = self.api.list_grantees()
+        except NetworkError:
+            messagebox.showerror("连接失败", "连不上服务器，请检查网络。", parent=self)
+            return
+        except ApiError as e:
+            messagebox.showerror("加载失败", e.message, parent=self)
+            return
+        GranteePermDialog(self, self.api, grantees)
 
     def _show_context_menu(self, event):
         """右键下拉菜单：刷新数据。"""
@@ -1416,21 +1682,36 @@ class App(tk.Tk):
         bind_scroll(self.card_frm, self.home_cv)
 
     def _bld_card(self, parent, b):
+        perm = b.get("_permission", "owner")
+        is_mine = (perm == "owner")
+        # 他人楼房用不同边框色 + 角标区分
+        border = C["border"] if is_mine else C["warning"]
         card = tk.Frame(parent, bg=C["card"],
-                        highlightbackground=C["border"], highlightthickness=1)
+                        highlightbackground=border,
+                        highlightthickness=1 if is_mine else 2)
         inn = tk.Frame(card, bg=C["card"]); inn.pack(fill=tk.X, padx=20, pady=18)
+
+        # 他人楼房：顶部加"来自 xxx"角标
+        if not is_mine:
+            tag = "👁 只读" if perm == "read" else "✎ 可编辑"
+            tk.Label(inn, text=f"👥 来自 {b.get('_owner_username','?')}  ·  {tag}",
+                     font=FONT_SMALL, fg=C["warning"], bg=C["card"]).pack(anchor=tk.W, pady=(0,6))
+
         r1 = tk.Frame(inn, bg=C["card"]); r1.pack(fill=tk.X)
-        ic = tk.Frame(r1, bg=C["primary_dim"], width=44, height=44)
+        ic_bg = C["primary_dim"] if is_mine else C["surface"]
+        ic = tk.Frame(r1, bg=ic_bg, width=44, height=44)
         ic.pack(side=tk.LEFT, padx=(0,14)); ic.pack_propagate(False)
-        tk.Label(ic, text="🏢", font=("Segoe UI Emoji",20), bg=C["primary_dim"]).place(relx=.5, rely=.5, anchor=tk.CENTER)
+        tk.Label(ic, text="🏢" if is_mine else "🏠", font=("Segoe UI Emoji",20), bg=ic_bg).place(relx=.5, rely=.5, anchor=tk.CENTER)
         nf = tk.Frame(r1, bg=C["card"]); nf.pack(side=tk.LEFT)
         tk.Label(nf, text=b["name"], font=FONT_HEADER, fg=C["text"], bg=C["card"]).pack(anchor=tk.W)
         bf = tk.Frame(r1, bg=C["card"]); bf.pack(side=tk.RIGHT)
-        for txt, clr, cmd in [("✏️", C["primary"], lambda bb=b: self._edit_bld(bb)),
-                              ("🗑️", C["danger"], lambda bb=b: self._del_bld(bb))]:
-            tk.Button(bf, text=txt, font=FONT_SMALL, relief=tk.FLAT, bd=0,
-                      bg=C["card"], fg=clr, activebackground=C["card_hover"],
-                      cursor="hand2", command=cmd).pack(side=tk.LEFT, padx=2)
+        # 编辑/删除按钮：只读楼房不显示（无权改）
+        if perm != "read":
+            for txt, clr, cmd in [("✏️", C["primary"], lambda bb=b: self._edit_bld(bb)),
+                                  ("🗑️", C["danger"], lambda bb=b: self._del_bld(bb))]:
+                tk.Button(bf, text=txt, font=FONT_SMALL, relief=tk.FLAT, bd=0,
+                          bg=C["card"], fg=clr, activebackground=C["card_hover"],
+                          cursor="hand2", command=cmd).pack(side=tk.LEFT, padx=2)
         r2 = tk.Frame(inn, bg=C["card"]); r2.pack(fill=tk.X, pady=(10,8))
         fl, rpf = b.get("floors",1), b.get("rooms_per_floor",1)
         total = fl * rpf
