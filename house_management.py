@@ -208,24 +208,58 @@ class RoundedBtn(tk.Canvas):
     def _draw(self, hover=False, pressed=False):
         self.delete("all")
         c = self.btn_bg
-        if pressed: c = self._dark(c, 0.15)
-        elif hover: c = self._dark(c, 0.08)
-        self._rr(0,0,self.w,self.h,8,fill=c,outline=c)
+        outline = c
+        if pressed:
+            # 按下：明显加深/提亮 + 描边，给出强反馈
+            c = self._shift(self.btn_bg, 0.18)
+            outline = self._ring(self.btn_bg)
+        elif hover:
+            # 悬停：按底色明暗自适应调整（深色提亮、浅色加深），并加描边圈
+            # 避免在深色主题里"越调越暗 → 与背景融为一体 → 看着像消失"
+            c = self._shift(self.btn_bg, 0.12)
+            outline = self._ring(self.btn_bg)
+        self._rr(1,1,self.w-1,self.h-1,8,fill=c,outline=outline,width=2)
         self.create_text(self.w//2, self.h//2, text=self.txt,
                          fill=self.fg, font=self.font)
     def _rr(self,x1,y1,x2,y2,r,**kw):
         return self.create_polygon([x1+r,y1,x2-r,y1,x2,y1,x2,y1+r,
                 x2,y2-r,x2,y2,x2-r,y2,x1+r,y2,x1,y2,x1,y2-r,x1,y1+r,x1,y1],
                 smooth=True,**kw)
+    def _rgb(self, hx):
+        hx = hx.lstrip("#")
+        return int(hx[0:2],16), int(hx[2:4],16), int(hx[4:6],16)
+    def _hex(self, r, g, b):
+        clamp = lambda v: max(0, min(255, int(v)))
+        return f"#{clamp(r):02x}{clamp(g):02x}{clamp(b):02x}"
+    def _lum(self, hx):
+        """感知亮度 0~255，用于判断按钮底色是深是浅。"""
+        r, g, b = self._rgb(hx)
+        return 0.299*r + 0.587*g + 0.114*b
     def _dark(self, hx, f):
-        hx=hx.lstrip("#")
-        return f"#{max(0,min(255,int(int(hx[i:i+2],16)*(1-f)))):02x}{max(0,min(255,int(int(hx[2:4],16)*(1-f)))):02x}{max(0,min(255,int(int(hx[4:6],16)*(1-f)))):02x}"
+        r, g, b = self._rgb(hx)
+        return self._hex(r*(1-f), g*(1-f), b*(1-f))
+    def _light(self, hx, f):
+        r, g, b = self._rgb(hx)
+        return self._hex(r+(255-r)*f, g+(255-g)*f, b+(255-b)*f)
+    def _shift(self, hx, f):
+        """明暗自适应：底色偏暗→提亮，底色偏亮→加深，保证对比变化看得见。"""
+        return self._light(hx, f) if self._lum(hx) < 128 else self._dark(hx, f)
+    def _ring(self, hx):
+        """描边圈颜色：与底色反向，确保边框在任何主题都可见。"""
+        return self._light(hx, 0.45) if self._lum(hx) < 128 else self._dark(hx, 0.35)
     def _d(self,e): self._p=True; self._draw(pressed=True)
     def _u(self,e):
         if self._p and self.cmd: self.cmd()
         self._p=False; self._draw()
     def _o(self,e): self._draw(hover=True)
     def _l(self,e): self._draw()  # 不重置_p，避免鼠标微动导致点击失效
+
+    def set_label(self, text=None, bg=None, fg=None):
+        """运行时更新按钮文字/颜色并重绘（如消息数变化）。"""
+        if text is not None: self.txt = text
+        if bg is not None: self.btn_bg = bg
+        if fg is not None: self.fg = fg
+        self._draw()
 
 
 class BackBtn(tk.Canvas):
@@ -1048,11 +1082,12 @@ class TransferDialog(tk.Toplevel):
 # ============================================================
 class InboxDialog(tk.Toplevel):
     """消息箱：列出收到的待处理申请，可同意/拒绝。"""
-    def __init__(self, parent, api, requests, on_done=None):
+    def __init__(self, parent, api, requests, on_done=None, on_change=None):
         super().__init__(parent)
         self.api = api
         self.requests = list(requests)
         self.on_done = on_done
+        self.on_change = on_change
         self.changed = False
 
         self.title("消息 - 待处理申请")
@@ -1111,6 +1146,9 @@ class InboxDialog(tk.Toplevel):
             self.changed = True
             self.requests = [x for x in self.requests if x["id"] != r["id"]]
             self._render()
+            # 即时刷新侧栏消息角标，避免"已处理却仍显示有新消息"的误解
+            if self.on_change:
+                self.on_change()
             if approve:
                 messagebox.showinfo("已同意",
                     f"已同意「{r.get('requesterUsername','?')}」查看你的楼房（默认只读）。\n"
@@ -1489,8 +1527,18 @@ class App(tk.Tk):
             sw = tk.Frame(inn, bg=C["surface"]); sw.pack(pady=(4,0))
             for sc in [ti["primary"], ti["success"], ti["warning"]]:
                 tk.Frame(sw, bg=sc, width=14, height=8).pack(side=tk.LEFT, padx=2)
+            # 悬停反馈：未选中的主题块在鼠标移入时高亮边框，移出复原（选中态不变）
+            def _theme_hover(_e, b=btn, act=active):
+                if not act:
+                    b.configure(highlightbackground=C["primary"], highlightthickness=2)
+            def _theme_leave(_e, b=btn, act=active):
+                if not act:
+                    b.configure(highlightbackground=C["border"], highlightthickness=1)
             for w in (btn, inn) + tuple(inn.winfo_children()) + tuple(sw.winfo_children()):
                 w.bind("<Button-1>", lambda e, tn=tn: self._switch_theme(tn))
+                w.bind("<Enter>", _theme_hover)
+                w.bind("<Leave>", _theme_leave)
+                w.configure(cursor="hand2")
 
         RoundedBtn(sb, "＋ 添加楼房", command=self._add_building,
                    bg=C["primary"], width=206, height=42,
@@ -1509,9 +1557,10 @@ class App(tk.Tk):
         msg_label = f"📬 消息 ({pending})" if pending else "📭 消息"
         msg_bg = C["warning"] if pending else C["surface"]
         msg_fg = C["white"] if pending else C["text"]
-        RoundedBtn(sb, msg_label, command=self._show_inbox,
+        self.msg_btn = RoundedBtn(sb, msg_label, command=self._show_inbox,
                    bg=msg_bg, fg=msg_fg, width=206, height=38,
-                   canvas_bg=C["sidebar_bg"]).pack(pady=(0, 20))
+                   canvas_bg=C["sidebar_bg"])
+        self.msg_btn.pack(pady=(0, 20))
 
         ma = tk.Frame(self.main, bg=C["bg"]); ma.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         # 右键菜单：刷新数据（手机端更新后无需退出重登）
@@ -1608,7 +1657,23 @@ class App(tk.Tk):
         except ApiError as e:
             messagebox.showerror("加载失败", e.message, parent=self)
             return
-        InboxDialog(self, self.api, requests, on_done=self._after_inbox)
+        InboxDialog(self, self.api, requests, on_done=self._after_inbox,
+                    on_change=self._refresh_msg_badge)
+
+    def _refresh_msg_badge(self):
+        """重新拉取待处理申请数并即时更新侧栏消息按钮（处理完一条立即生效）。"""
+        btn = getattr(self, "msg_btn", None)
+        if not btn or not btn.winfo_exists():
+            return
+        try:
+            pending = len(self.api.inbox()) if not self.dm.offline else 0
+        except Exception:
+            return
+        if pending:
+            btn.set_label(text=f"📬 消息 ({pending})",
+                          bg=C["warning"], fg=C["white"])
+        else:
+            btn.set_label(text="📭 消息", bg=C["surface"], fg=C["text"])
 
     def _after_inbox(self):
         # 处理完申请后刷新数据（新授权的人可能产生可见楼房变化）
