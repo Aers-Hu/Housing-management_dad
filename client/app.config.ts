@@ -71,6 +71,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "owner": "aers",
+    "extra": {
+      ...(config.extra ?? {}),
+      "eas": {
+        "projectId": "8ddfb094-5c7b-4bf2-8faf-a841593477a7"
+      }
     }
   }
 }
