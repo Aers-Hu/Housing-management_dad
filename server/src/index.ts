@@ -1,3 +1,4 @@
+import 'dotenv/config';   // 必须最先：加载 server/.env，使 TOKEN_SECRET 等环境变量生效
 import express from "express";
 import cors from "cors";
 import { readFileSync, existsSync } from "node:fs";
