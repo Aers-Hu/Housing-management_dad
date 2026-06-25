@@ -1,261 +1,170 @@
-# Expo App + Express.js
+# 楼房管理系统（出租房管理）
 
-## 目录结构规范（严格遵循）
+面向房东的出租房管理工具：管理多栋楼、每层房间、租客信息与交租情况，支持多端同步与账号间授权查看。
 
-当前仓库是一个 monorepo（基于 pnpm 的 workspace）
+## 项目构成
 
-- Expo 代码在 client 目录，Express.js 代码在 server 目录
-- 本模板默认无 Tab Bar，可按需改造
+本仓库包含三个相互配合的部分：
 
-├── client/                     # React Native 前端代码
-│   ├── app/                    # Expo Router 路由目录（仅路由配置）
-│   │   ├── _layout.tsx         # 根布局文件（必需，务必阅读）
-│   │   └── index.tsx           # 首页
-│   ├── screens/                # 页面实现目录（与 app/ 路由对应）
-│   │   └── demo/               # 示例页面
-│   │       └── index.tsx
-│   ├── components/             # 可复用组件
-│   │   └── Screen.tsx          # 页面容器组件（必用）
-│   ├── hooks/                  # 自定义 Hooks
-│   ├── contexts/               # React Context 代码
-│   ├── utils/                  # 工具函数
-│   ├── assets/                 # 静态资源
-|   └── package.json            # Expo 应用 package.json
-├── server/                     # 服务端代码根目录 (Express.js)
-|   ├── src/
-│   │   └── index.ts            # 服务端入口文件
-|   └── package.json            # 服务端 package.json
-├── package.json
-├── .cozeproj                   # 预置脚手架脚本（禁止修改）
-└── .coze                       # 配置文件（禁止修改）
+| 部分 | 技术栈 | 目录 | 说明 |
+|------|--------|------|------|
+| 桌面客户端 | Python 3 + Tkinter | `house_management.py`、`api_client.py` | 主要使用的图形界面程序，可打包成 Windows exe |
+| 手机客户端 | Expo（React Native）+ TypeScript | `client/` | 移动端 App，与桌面端共用同一套服务端数据 |
+| 服务端 | Node.js + Express + TypeScript + SQLite | `server/` | 账号认证、数据存储、多端同步与授权 |
 
-## 样式方案
+> 桌面端和手机端都通过服务端的 REST API 读写数据，因此同一账号在不同设备上看到的是同一份数据。服务端不可用时，桌面端会回退到本地缓存（`housing_cache.json`）。
 
-基于 tailwindcss 进行样式开发（底层基于 Uniwind）
+## 核心功能
 
-写法示例：
+- 管理多栋楼，自定义楼名、层数、每层房间数、楼层显示号
+- 房间网格按楼层排列（房间多时可横向滚动），点击房间设置：是否入住、租客姓名、每月房租、每月交租记录、租客注解
+- 租期管理：显示租期与剩余月份（按自然月计算）
+- 转移租客（换房时保留注解与交租记录）
+- 多端数据同步
+- 账号间通讯：申请查看其他用户的全部楼房；被申请方可同意/拒绝，并控制被授权人的只读/可写权限
 
-```tsx
-<View className="flex-1 bg-white dark:bg-gray-900 p-4"></View>
-```
+需求原文见 `项目要求.txt`，需求参考截图见 `example/1.png`（仅本地，不入库）。
 
-```tsx
-<Text
-  className="text-lg font-bold text-gray-900 dark:text-white"
-  selectionColorClassName="accent-blue-500"
->
-  Hello World
-</Text>
-```
+---
 
-Uniwind 官方文档：https://docs.uniwind.dev/llms.txt
+## 一、桌面客户端（Python / Tkinter）
 
-## 如何进行静态校验（TSC + ESLint）
+主程序，日常使用的就是这一端。
+
+### 运行（开发）
 
 ```bash
-# 对 client 和 server 目录同时进行校验
-pnpm -w lint:all
-
-# 对 client 目录进行校验
-pnpm -w lint:client
-
-# 对 server 目录进行校验
-pnpm -w lint:server
+# 需要 Python 3.8+，仅用标准库 + tkinter，无需安装第三方依赖
+python house_management.py
 ```
 
-## 如何修改主题模式（跟随系统、固定暗色、固定亮色）
-
-默认为跟随系统，如果用户明确指定为“暗色”或“亮色”，需要修改 `client/components/ColorSchemeUpdater.tsx` 的 `DEFAULT_THEME` 变量为合适的值
-
-## 如何定制主题 design tokens
-
-当前项目的**设计系统**基于 tailwindcss 实现，核心入口文件为 `client/global.css`，如果需要定制主题，应该**阅读并修改 `client/global.css` 文件**
-
-## 路由及 Tab Bar 实现规范
-
-### 方案一：无 Tab Bar（Stack 导航）
-
-适用于线性流程应用，采用简化的目录结构：
-
-```
-client/app/
-├── _layout.tsx         # 根布局（Stack 导航配置）
-├── index.tsx           # 应用入口
-├── detail.tsx          # 详情页（通过 params 传递数据）
-└── +not-found.tsx      # 404 页面
-```
-
-**根布局配置** `client/app/_layout.tsx`：
-
-以下仅为代码片段供写法参考
-
-```tsx
-<Stack screenOptions={{ headerShown: false }}>
-  <Stack.Screen name="index" />
-  <Stack.Screen name="detail" />
-</Stack>
-```
-
-**应用入口** `client/app/index.tsx`：
-```tsx
-export { default } from "@/screens/home";
-```
-> **禁止事项**：无 Tab Bar 场景下，不得创建 `(tabs)` 目录。
-
-### 方案二：有 Tab Bar（Tabs 导航）
-
-采用路由分组实现底部导航栏：
-```
-client/app/
-├── _layout.tsx              # 根布局
-├── (tabs)/
-│   ├── _layout.tsx          # Tab 导航配置
-│   ├── index.tsx            # 默认 Tab（必须存在）
-│   ├── discover.tsx         # 发现页
-│   └── profile.tsx          # 个人中心
-├── detail.tsx               # Tab 外的独立页面（通过 params 传递数据）
-└── +not-found.tsx
-```
-> **⚠️ [CRITICAL]**： `app/index.tsx` 优先级高于 `(tabs)/index.tsx`，会导致首页无 Tab Bar。**当有(tabs)/index.tsx时必须删除 `app/index.tsx`**。
-
-**根布局配置** `client/app/_layout.tsx`：
-
-以下仅为代码片段供写法参考
-
-```tsx
-<Stack screenOptions={{ headerShown: false }}>
-  <Stack.Screen name="(tabs)" />
-  <Stack.Screen name="detail" />
-</Stack>
-```
-
-**应用入口** `client/app/(tabs)/index.tsx`：
-```tsx
-export { default } from "@/screens/home";
-```
-
-**Tab 布局配置** `client/app/(tabs)/_layout.tsx`：
-
-```tsx
-import { Tabs } from 'expo-router';
-import { Platform } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FontAwesome6 } from '@expo/vector-icons';
-import { useCSSVariable } from 'uniwind';
-
-export default function TabLayout() {
-  const insets = useSafeAreaInsets();
-  const [background, muted, accent, border] = useCSSVariable([
-    '--color-background',
-    '--color-muted',
-    '--color-accent',
-    '--color-border',
-  ]) as string[];
-
-  let tabBarStyle = {
-    backgroundColor: background,
-    borderTopWidth: 1,
-    borderTopColor: border,
-  };
-
-  // 用于修复 Web 上高度异常的问题（这个 if 逻辑必须添加）
-  if (Platform.OS === 'web') {
-    tabBarStyle = {
-      ...tabBarStyle,
-      height: 'auto',
-    }
-  }
-
-  return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle,
-        tabBarActiveTintColor: accent,
-        tabBarInactiveTintColor: muted,
-      }}
-    >
-      {/* name 必须与文件名完全一致 */}
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: '首页',
-          tabBarIcon: ({ color }) => (
-            <FontAwesome6 name="house" size={20} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="discover"
-        options={{
-          title: '发现',
-          tabBarIcon: ({ color }) => (
-            <FontAwesome6 name="compass" size={20} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: '我的',
-          tabBarIcon: ({ color }) => (
-            <FontAwesome6 name="user" size={20} color={color} />
-          ),
-        }}
-      />
-    </Tabs>
-  );
-}
-```
-
-**Tab 页面文件** `client/app/(tabs)/index.tsx`：
-```tsx
-export { default } from "@/screens/home";
-```
-
-### 注意事项
-
-在改动 `client/app/_layout.tsx` 前，必须先阅读该文件，再进行修改操作
-
-以下是需要保留的重要逻辑
-
-- 保留 global.css 引入（tailwindcss 生效的关键）
-- 保留 Provider 的使用
-
-## 依赖管理与模块导入规范
-
-### 依赖安装
-**禁止**使用 `npm` 或 `yarn`，按目录区分安装命令：
-
-| 目录 | 安装命令 | 说明 |
-|------|----------|------|
-| `client/` | `npx expo install <package>` | Expo 会自动选择与 SDK 兼容的版本 |
-| `server/` | `pnpm add <package>` | 使用 pnpm 管理后端依赖 |
+### 打包为 EXE
 
 ```bash
-# client 目录（Expo 项目）
-cd client && npx expo install expo-camera expo-image-picker
-
-# server 目录（Express 项目）
-cd server && pnpm add axios cors
+# Windows 下双击或执行（内部用 PyInstaller）
+build.bat
 ```
 
-**网络问题处理**：`npx expo install` 可能因网络原因失败，失败时重试 2 次，仍失败则改用 `pnpm add` 安装
+打包产物位于 `dist/楼房管理系统.exe`，打包配置见 `楼房管理系统.spec`。
 
-## Expo 开发规范
+### 相关文件
 
-### 路径别名
+- `house_management.py`：Tkinter 图形界面，含 5 套主题（暗夜黑 / 极简白 / 森林绿 / 海洋蓝 / 暖橙色）
+- `api_client.py`：与服务端通信的客户端（纯标准库 `urllib`，便于打包），并负责「服务端扁平模型 ↔ Python 嵌套模型」的双向转换
+- `client_config.json`：本地配置（服务器地址、登录 token、用户名、主题偏好），**含敏感信息，不入库**
+- `housing_cache.json`：服务端不可用时的本地数据缓存，**不入库**
+- `test_api_client.py` / `test_datastore.py`：桌面端测试
 
-Expo 配置了 `@/` 路径别名指向 `client/` 目录：
+---
 
-```tsx
-// 正确
-import { Screen } from '@/components/Screen';
+## 二、服务端（Node.js / Express + SQLite）
 
-// 避免相对路径
-import { Screen } from '../../../components/Screen';
+为桌面端与手机端提供统一的数据接口。
+
+### 运行（开发）
+
+```bash
+cd server
+pnpm install
+pnpm run dev      # 用 tsx watch 启动，默认端口 9091
 ```
 
-## 本地开发
+### 生产构建与启动
 
-`coze dev`：用来首次启动前后端服务，也可以用来重启前后端服务（该命令会先尝试杀掉占用端口的进程，再启动服务）
+```bash
+cd server
+pnpm run build    # 用 esbuild 打包到 dist/index.js
+pnpm run start    # node dist/index.js
+```
+
+### 配置
+
+复制 `server/.env.example` 为 `server/.env` 后按需修改：
+
+- `PORT`：监听端口（默认 9091）
+- `TOKEN_SECRET`：token 签名密钥，**上云前务必改成一长串随机值**
+- `DB_PATH`：SQLite 数据库文件路径（默认 `server/data/housing.db`）
+- `TLS_KEY` / `TLS_CERT`：配置后自动启用 HTTPS，否则使用 HTTP
+
+部署与运维加固见 `server/DEPLOY.md` 与 `server/运维加固清单.md`。
+
+### 技术要点
+
+- 数据库使用 Node 内置 `node:sqlite`（无需原生编译）；表结构见 `server/src/db/index.ts`
+- 密码用 `scrypt` 哈希；登录态用自包含的 HMAC-SHA256 签名 token（30 天有效），服务端不存 session，见 `server/src/auth/crypto.ts`
+- 数据文件、数据库、证书均已在 `.gitignore` 中排除，**不入库**
+
+> 注意：`server/package.json` 中仍保留了部分脚手架模板带入、当前代码未使用的依赖（如 `@supabase/supabase-js`、`drizzle-orm`、`pg`、`multer`、`zod`、`dayjs`）。可在确认无用后清理。
+
+### 主要接口（前缀 `/api/v1`）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/auth/register`、`/auth/login` | 注册 / 登录（免 token） |
+| GET | `/auth/me` | 校验 token |
+| GET | `/buildings` | 列出可访问的楼房（自有 + 被授权） |
+| GET/POST/PUT/DELETE | `/buildings/:id` 等 | 楼房增删改查 |
+| PUT/POST/DELETE | `/rooms/:id`、`/buildings/:id/rooms` | 房间增删改 |
+| POST/GET | `/access-requests` 系列 | 申请查看、收件箱、发件箱、同意/拒绝 |
+| GET/PUT/DELETE | `/grantees` 系列 | 授权管理（读/写权限、撤销） |
+
+---
+
+## 三、手机客户端（Expo / React Native）
+
+移动端 App，目录结构与路由约定如下。
+
+### 目录结构
+
+```
+client/
+├── app/                # Expo Router 路由（仅路由配置）
+│   ├── _layout.tsx     # 根布局
+│   ├── index.tsx       # 入口（首页）
+│   ├── login.tsx
+│   ├── building.tsx
+│   └── room.tsx
+├── screens/            # 页面实现（与 app/ 路由对应）
+│   ├── home/           # 楼房列表 + 通讯入口
+│   ├── building/       # 单栋楼房的房间网格
+│   ├── room/           # 房间详情/编辑
+│   └── login/
+├── components/         # 可复用组件（Screen.tsx 为页面容器）
+├── contexts/           # AuthContext 等
+├── hooks/              # 自定义 Hooks
+├── utils/              # api / sync / comm / storage / config / roomTypes
+└── assets/
+```
+
+### 运行
+
+```bash
+cd client
+npx expo start
+```
+
+服务器地址优先取登录页填写并保存的值，其次取环境变量 `EXPO_PUBLIC_API_BASE`，最后兜底 `http://localhost:9091`（见 `client/utils/config.ts`）。
+
+### 开发约定
+
+- 样式基于 tailwindcss（底层 Uniwind），主题 design token 入口为 `client/global.css`
+- 路径别名 `@/` 指向 `client/`，优先用别名而非相对路径
+- 安装依赖用 `npx expo install <package>`（自动匹配 SDK 兼容版本），不要用 `npm` / `yarn`
+- 改动 `client/app/_layout.tsx` 前先阅读，保留 `global.css` 引入与各 Provider
+- 主题模式（跟随系统/暗/亮）改 `client/components/ColorSchemeUpdater.tsx` 的 `DEFAULT_THEME`
+
+### 静态校验
+
+```bash
+pnpm -w lint:client    # 校验 client
+pnpm -w lint:server    # 校验 server
+pnpm -w lint:all       # 同时校验
+```
+
+---
+
+## 数据与隐私
+
+租客等业务数据存放于本地/自建服务端，不上传第三方。以下文件包含敏感信息并已被 `.gitignore` 排除：`housing_data.json`、`housing_cache.json`、`client_config.json`、`server/data/`（数据库）、`server/certs/`（证书）。
+
+GitHub 仓库：https://github.com/Aers-Hu/Housing-management_dad
