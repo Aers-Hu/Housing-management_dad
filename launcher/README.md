@@ -13,6 +13,7 @@
 | `start-housing.ps1` | 实际的启动+守护脚本，可改顶部配置（端口、是否开隧道） |
 | `frpc.toml.example` | 隧道配置模板，复制为 `frpc.toml` 后填你的云服务器信息 |
 | `install-autostart.bat` | 注册「开机自启」（把启动器加入当前用户启动项） |
+| `备份数据库.bat` / `backup-db.ps1` | 把主库 `housing.db` 复制到 `backups` 目录（带日期，保留最近 14 天） |
 | `frpc.exe` | 需你自行下载放入（见下） |
 
 ## 首次使用
@@ -40,3 +41,14 @@
 ## 验证在跑
 
 浏览器打开 `http://127.0.0.1:9091/api/v1/health`，返回 `{"status":"ok"}` 即正常。
+
+## 数据备份（重要）⭐
+
+租客数据就是一个文件 `%APPDATA%\HouseApp\housing.db`，**务必定期备份**（硬盘坏/误删 = 数据全丢）。
+
+- **手动备份**：双击 `备份数据库.bat`，会复制到本文件夹的 `backups\housing-日期.db`，自动保留最近 14 天。
+- **每天自动备份**：用 Windows「任务计划程序」加一个任务，操作选「启动程序」指向 `备份数据库.bat`，触发器设每天某时间。
+  - 想保留更久：编辑 `backup-db.ps1` 顶部的 `$KeepDays`。
+- **异地备份建议**：偶尔把 `backups` 里的文件复制到 U 盘 / 网盘，防止本机整体损坏。
+
+> ⚠️ `backups` 目录含真实租客数据，已加入 `.gitignore`，不会被上传到 GitHub。

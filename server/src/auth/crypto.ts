@@ -67,7 +67,15 @@ export function verifyToken(token: string): { uid: string } | null {
   }
 }
 
-// 启动时若用的是默认密钥，警告一声（上云必须设 TOKEN_SECRET）
+// 启动时检查 TOKEN_SECRET：
+//   - 生产环境(NODE_ENV=production)未设 → 直接拒绝启动（否则 token 可被伪造，冒充任意账号）
+//   - 开发环境未设 → 用默认密钥并警告
 if (!process.env.TOKEN_SECRET) {
-  console.warn('⚠️  未设置 TOKEN_SECRET 环境变量，正在使用不安全的默认密钥。部署上云前务必设置！');
+  if (process.env.NODE_ENV === 'production') {
+    console.error('❌ 生产环境必须设置 TOKEN_SECRET 环境变量，否则登录 token 可被伪造！');
+    console.error('   生成方法：node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+    console.error('   然后在 server/.env 里设置 TOKEN_SECRET=<生成的随机串> 再启动。');
+    process.exit(1);
+  }
+  console.warn('⚠️  未设置 TOKEN_SECRET 环境变量，正在使用不安全的默认密钥（仅限本地开发）。');
 }

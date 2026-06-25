@@ -2,14 +2,18 @@ import { Router } from 'express';
 import { Users } from '../db/repo.ts';
 import { hashPassword, verifyPassword, createToken } from '../auth/crypto.ts';
 import { authRequired, getUserId } from '../middleware/auth.ts';
+import { rateLimit } from '../middleware/rateLimit.ts';
 
 const router = Router();
 
 // 用户名规则：3-30 位，字母数字下划线
 const USERNAME_RE = /^[A-Za-z0-9_]{3,30}$/;
 
+// 登录/注册限流：同一 IP 每分钟最多 10 次，挡暴力破解 + scrypt DoS
+const authLimiter = rateLimit({ windowMs: 60_000, max: 10, message: '登录尝试过于频繁，请稍后再试' });
+
 // 注册
-router.post('/register', (req, res) => {
+router.post('/register', authLimiter, (req, res) => {
   const { username, password } = req.body ?? {};
   if (typeof username !== 'string' || !USERNAME_RE.test(username)) {
     return res.status(400).json({ error: '用户名需为 3-30 位字母、数字或下划线' });
@@ -26,7 +30,7 @@ router.post('/register', (req, res) => {
 });
 
 // 登录
-router.post('/login', (req, res) => {
+router.post('/login', authLimiter, (req, res) => {
   const { username, password } = req.body ?? {};
   if (typeof username !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ error: '缺少用户名或密码' });

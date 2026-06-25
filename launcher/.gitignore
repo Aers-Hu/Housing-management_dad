@@ -4,3 +4,5 @@ frpc.exe
 frpc.toml
 # 运行日志
 logs/
+# 数据库备份（含真实租客数据，禁止上传）
+backups/
