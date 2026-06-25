@@ -1,0 +1,50 @@
+# ============================================================
+# frpc 隧道客户端配置示例（本机 → 云服务器）
+#
+# 用法：
+#   1) 复制本文件为 frpc.toml（去掉 .example）
+#   2) 把下面 serverAddr / auth.token / 域名 换成你自己的
+#   3) 从 https://github.com/fatedier/frp/releases 下载 Windows 版，
+#      解压出 frpc.exe 放到本文件夹
+#
+# 配套：云服务器上跑 frps（见部署指南 DEPLOY-本地主库版.md 第三节）。
+# 本配置把你电脑的 127.0.0.1:9091（主库服务）经云端以 HTTPS 暴露给手机。
+# ============================================================
+
+# ---- 云服务器（跑 frps 的那台）地址与控制端口 ----
+serverAddr = "你的云服务器公网IP"
+serverPort = 7000
+
+# ---- 与 frps 对上的鉴权 token（两边必须一致）----
+auth.method = "token"
+auth.token = "把这里换成一长串随机字符串_和frps一致"
+
+# ============================================================
+# 方式一【推荐】：云端已配好域名 + HTTPS（frps 的 vhostHTTPSPort）
+# 手机访问 https://你的域名 即可连到本机主库。
+# 需要云端 frps 开启 vhostHTTPSPort，并在云端用 nginx/caddy 终止 TLS，
+# 或直接用 frps 的 https2http 插件（见指南）。
+# ============================================================
+[[proxies]]
+name = "housing-https"
+type = "https"
+customDomains = ["你的域名"]
+[proxies.plugin]
+type = "https2http"
+localAddr = "127.0.0.1:9091"
+# 云端证书路径由 frps 侧处理；此处指向本机服务的明文端口
+crtPath = ""
+keyPath = ""
+hostHeaderRewrite = "127.0.0.1"
+
+# ============================================================
+# 方式二【最简】：仅用 TCP 端口直连（先跑通，再上 HTTPS）
+# 手机访问 http://你的云服务器IP:9091 即可（明文，仅供调试/过渡）。
+# 用这种方式时，注释掉上面的 [[proxies]] https 段，启用下面这段。
+# ============================================================
+# [[proxies]]
+# name = "housing-tcp"
+# type = "tcp"
+# localIP = "127.0.0.1"
+# localPort = 9091
+# remotePort = 9091

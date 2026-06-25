@@ -1,9 +1,33 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 
-// 数据库文件路径（可用环境变量覆盖，便于上云时指定持久化目录）
-const DB_PATH = process.env.DB_PATH || resolve(process.cwd(), 'data', 'housing.db');
+// ============================================================
+// 数据库文件路径（本机主库版）
+// 优先级：环境变量 DB_PATH > 本机用户数据目录 > 程序目录/data 兜底
+//
+// 默认放到「用户数据目录」而非程序目录，这样升级/重装程序不会动到数据库：
+//   - Windows : %APPDATA%\HouseApp\housing.db
+//   - macOS   : ~/Library/Application Support/HouseApp/housing.db
+//   - Linux   : ~/.local/share/HouseApp/housing.db
+// ============================================================
+function defaultDbPath(): string {
+  const home = homedir();
+  let dir: string;
+  if (process.platform === 'win32') {
+    dir = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+  } else if (process.platform === 'darwin') {
+    dir = join(home, 'Library', 'Application Support');
+  } else {
+    dir = process.env.XDG_DATA_HOME || join(home, '.local', 'share');
+  }
+  // 极端情况下 homedir 拿不到，回退到程序目录/data
+  if (!dir) return resolve(process.cwd(), 'data', 'housing.db');
+  return join(dir, 'HouseApp', 'housing.db');
+}
+
+const DB_PATH = process.env.DB_PATH || defaultDbPath();
 
 // 确保目录存在
 mkdirSync(dirname(DB_PATH), { recursive: true });

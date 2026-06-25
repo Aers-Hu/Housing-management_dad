@@ -3,6 +3,7 @@ import { LogBox, View, ActivityIndicator } from 'react-native';
 import { useEffect } from 'react';
 import Toast from 'react-native-toast-message';
 import { Provider } from '@/components/Provider';
+import { OfflineBanner } from '@/components/OfflineBanner';
 import { useAuth } from '@/contexts/AuthContext';
 
 import '../global.css';
@@ -56,6 +57,7 @@ export default function RootLayout() {
   return (
     <Provider>
       <AuthGate />
+      <OfflineBanner />
       <Toast />
     </Provider>
   );

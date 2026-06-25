@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApiBase } from './config';
+import { reportOnline, isOnline } from './netstatus';
 
 // ============================================================
 // HTTP 客户端：自动带 token、统一错误处理、识别"网络不可用"
@@ -47,7 +48,9 @@ interface RequestOpts {
 }
 
 export async function apiRequest<T = any>(path: string, opts: RequestOpts = {}): Promise<T> {
-  const { method = 'GET', body, auth = true, timeoutMs = 10000 } = opts;
+  // 已知离线时用更短超时，避免读操作/探测干等；在线默认 10s 容忍慢网络
+  const defaultTimeout = isOnline() ? 10000 : 3500;
+  const { method = 'GET', body, auth = true, timeoutMs = defaultTimeout } = opts;
   const base = await getApiBase();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
@@ -69,10 +72,14 @@ export async function apiRequest<T = any>(path: string, opts: RequestOpts = {}):
     });
   } catch {
     // fetch 抛错 = 网络层失败（断网、服务器没开、超时）
+    reportOnline(false);
     throw new NetworkError();
   } finally {
     clearTimeout(timer);
   }
+
+  // 拿到了 HTTP 响应（哪怕是 4xx/5xx）即说明能连上主库
+  reportOnline(true);
 
   let data: any = null;
   const text = await resp.text();
