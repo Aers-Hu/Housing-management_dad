@@ -45,7 +45,7 @@
 | 手机客户端 | Expo 54（React Native 0.81）+ TypeScript | `client/` | 移动端 App，支持 Android APK 构建（EAS 云端） |
 | 服务端 | Node.js + Express + TypeScript + SQLite | `server/` | 账号认证、数据存储、多端同步与授权 |
 
-需求原文见 `项目要求.txt`，需求参考截图见 `example/1.png`（仅本地，不入库）。
+需求原文见 `项目要求.txt`（仅本地，不入库），需求参考截图见 `example/1.png`（仅本地，不入库）。
 
 ---
 
@@ -264,6 +264,7 @@ pnpm -w lint:all       # 同时校验
 
 租客等业务数据存放于本地/自建服务端，不上传第三方。以下文件包含敏感信息并已被 `.gitignore` 排除：
 
+- `项目要求.txt` — 需求文档（仅本地参考）
 - `housing_data.json`、`housing_cache.json` — 本地缓存数据
 - `client_config.json` — 含登录 token
 - `server/data/` — SQLite 数据库（租客姓名、租金、记录等）
