@@ -1,261 +1,94 @@
-# Expo App + Express.js
+# 🏢 楼房管理系统 (House Management System)
 
-## 目录结构规范（严格遵循）
+基于 Python Tkinter 的本地桌面端楼房与租客管理工具，提供简洁直观的图形化界面，支持楼房、房屋、租客、租金的全流程管理。
 
-当前仓库是一个 monorepo（基于 pnpm 的 workspace）
+## ✨ 主要功能
 
-- Expo 代码在 client 目录，Express.js 代码在 server 目录
-- 本模板默认无 Tab Bar，可按需改造
+### 🏠 楼房管理
+- **添加 / 删除楼房**：管理多栋楼房，每栋可自定义名称
+- **编辑楼房信息**：修改楼房名称、楼层数、每层房屋数
+- **自定义楼层号**：灵活修改每一楼层的楼层编号（如将第 1 层设为第 2 层）
+- **长按重命名**：长按楼房卡片可直接自定义命名
 
-├── client/                     # React Native 前端代码
-│   ├── app/                    # Expo Router 路由目录（仅路由配置）
-│   │   ├── _layout.tsx         # 根布局文件（必需，务必阅读）
-│   │   └── index.tsx           # 首页
-│   ├── screens/                # 页面实现目录（与 app/ 路由对应）
-│   │   └── demo/               # 示例页面
-│   │       └── index.tsx
-│   ├── components/             # 可复用组件
-│   │   └── Screen.tsx          # 页面容器组件（必用）
-│   ├── hooks/                  # 自定义 Hooks
-│   ├── contexts/               # React Context 代码
-│   ├── utils/                  # 工具函数
-│   ├── assets/                 # 静态资源
-|   └── package.json            # Expo 应用 package.json
-├── server/                     # 服务端代码根目录 (Express.js)
-|   ├── src/
-│   │   └── index.ts            # 服务端入口文件
-|   └── package.json            # 服务端 package.json
-├── package.json
-├── .cozeproj                   # 预置脚手架脚本（禁止修改）
-└── .coze                       # 配置文件（禁止修改）
+### 🏘️ 房屋管理
+- **房屋网格视图**：以横向滚动的楼层卡片形式展示所有房屋，直观清晰
+- **房屋命名**：为每个房屋设置自定义名称（如 8601、商铺A 等）
+- **入住状态管理**：标记房屋是否已入住
+- **横向滚动条**：房间数量较多时可拖动查看不同房间
 
-## 样式方案
+### 👤 租客管理
+- **租客信息**：记录租客姓名、入住日期
+- **租金管理**：按月跟踪租金缴纳情况，支持自定义金额
+- **租客备注**：添加租客注解，方便回忆和记录
+- **租期管理**：显示租期起止时间与剩余租期（按月计算）
+- **房屋转移**：支持租客换房，一键转移租客数据到其他房屋
 
-基于 tailwindcss 进行样式开发（底层基于 Uniwind）
+### 🎨 界面特色
+- **5 套主题**：暗夜黑、极简白、森林绿、海洋蓝、暖橙色，自由切换
+- **简约年轻化 UI**：圆角按钮、卡片式布局、现代配色
+- **滚轮适配**：全局鼠标滚轮支持，操作流畅
+- **递归返回**：子页面可逐级返回至主界面
 
-写法示例：
+## 🛠 技术栈
 
-```tsx
-<View className="flex-1 bg-white dark:bg-gray-900 p-4"></View>
-```
+| 类别 | 技术 |
+|------|------|
+| 语言 | Python 3 |
+| GUI 框架 | Tkinter (标准库) |
+| 数据存储 | JSON 本地文件 (`housing_data.json`) |
+| 打包工具 | PyInstaller |
 
-```tsx
-<Text
-  className="text-lg font-bold text-gray-900 dark:text-white"
-  selectionColorClassName="accent-blue-500"
->
-  Hello World
-</Text>
-```
+## 📦 快速开始
 
-Uniwind 官方文档：https://docs.uniwind.dev/llms.txt
+### 环境要求
 
-## 如何进行静态校验（TSC + ESLint）
+- Python 3.8+
+- 依赖：`pyinstaller>=6.0.0`（仅打包时需要）
+
+### 直接运行
 
 ```bash
-# 对 client 和 server 目录同时进行校验
-pnpm -w lint:all
-
-# 对 client 目录进行校验
-pnpm -w lint:client
-
-# 对 server 目录进行校验
-pnpm -w lint:server
+python house_management.py
 ```
 
-## 如何修改主题模式（跟随系统、固定暗色、固定亮色）
-
-默认为跟随系统，如果用户明确指定为“暗色”或“亮色”，需要修改 `client/components/ColorSchemeUpdater.tsx` 的 `DEFAULT_THEME` 变量为合适的值
-
-## 如何定制主题 design tokens
-
-当前项目的**设计系统**基于 tailwindcss 实现，核心入口文件为 `client/global.css`，如果需要定制主题，应该**阅读并修改 `client/global.css` 文件**
-
-## 路由及 Tab Bar 实现规范
-
-### 方案一：无 Tab Bar（Stack 导航）
-
-适用于线性流程应用，采用简化的目录结构：
-
-```
-client/app/
-├── _layout.tsx         # 根布局（Stack 导航配置）
-├── index.tsx           # 应用入口
-├── detail.tsx          # 详情页（通过 params 传递数据）
-└── +not-found.tsx      # 404 页面
-```
-
-**根布局配置** `client/app/_layout.tsx`：
-
-以下仅为代码片段供写法参考
-
-```tsx
-<Stack screenOptions={{ headerShown: false }}>
-  <Stack.Screen name="index" />
-  <Stack.Screen name="detail" />
-</Stack>
-```
-
-**应用入口** `client/app/index.tsx`：
-```tsx
-export { default } from "@/screens/home";
-```
-> **禁止事项**：无 Tab Bar 场景下，不得创建 `(tabs)` 目录。
-
-### 方案二：有 Tab Bar（Tabs 导航）
-
-采用路由分组实现底部导航栏：
-```
-client/app/
-├── _layout.tsx              # 根布局
-├── (tabs)/
-│   ├── _layout.tsx          # Tab 导航配置
-│   ├── index.tsx            # 默认 Tab（必须存在）
-│   ├── discover.tsx         # 发现页
-│   └── profile.tsx          # 个人中心
-├── detail.tsx               # Tab 外的独立页面（通过 params 传递数据）
-└── +not-found.tsx
-```
-> **⚠️ [CRITICAL]**： `app/index.tsx` 优先级高于 `(tabs)/index.tsx`，会导致首页无 Tab Bar。**当有(tabs)/index.tsx时必须删除 `app/index.tsx`**。
-
-**根布局配置** `client/app/_layout.tsx`：
-
-以下仅为代码片段供写法参考
-
-```tsx
-<Stack screenOptions={{ headerShown: false }}>
-  <Stack.Screen name="(tabs)" />
-  <Stack.Screen name="detail" />
-</Stack>
-```
-
-**应用入口** `client/app/(tabs)/index.tsx`：
-```tsx
-export { default } from "@/screens/home";
-```
-
-**Tab 布局配置** `client/app/(tabs)/_layout.tsx`：
-
-```tsx
-import { Tabs } from 'expo-router';
-import { Platform } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FontAwesome6 } from '@expo/vector-icons';
-import { useCSSVariable } from 'uniwind';
-
-export default function TabLayout() {
-  const insets = useSafeAreaInsets();
-  const [background, muted, accent, border] = useCSSVariable([
-    '--color-background',
-    '--color-muted',
-    '--color-accent',
-    '--color-border',
-  ]) as string[];
-
-  let tabBarStyle = {
-    backgroundColor: background,
-    borderTopWidth: 1,
-    borderTopColor: border,
-  };
-
-  // 用于修复 Web 上高度异常的问题（这个 if 逻辑必须添加）
-  if (Platform.OS === 'web') {
-    tabBarStyle = {
-      ...tabBarStyle,
-      height: 'auto',
-    }
-  }
-
-  return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle,
-        tabBarActiveTintColor: accent,
-        tabBarInactiveTintColor: muted,
-      }}
-    >
-      {/* name 必须与文件名完全一致 */}
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: '首页',
-          tabBarIcon: ({ color }) => (
-            <FontAwesome6 name="house" size={20} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="discover"
-        options={{
-          title: '发现',
-          tabBarIcon: ({ color }) => (
-            <FontAwesome6 name="compass" size={20} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: '我的',
-          tabBarIcon: ({ color }) => (
-            <FontAwesome6 name="user" size={20} color={color} />
-          ),
-        }}
-      />
-    </Tabs>
-  );
-}
-```
-
-**Tab 页面文件** `client/app/(tabs)/index.tsx`：
-```tsx
-export { default } from "@/screens/home";
-```
-
-### 注意事项
-
-在改动 `client/app/_layout.tsx` 前，必须先阅读该文件，再进行修改操作
-
-以下是需要保留的重要逻辑
-
-- 保留 global.css 引入（tailwindcss 生效的关键）
-- 保留 Provider 的使用
-
-## 依赖管理与模块导入规范
-
-### 依赖安装
-**禁止**使用 `npm` 或 `yarn`，按目录区分安装命令：
-
-| 目录 | 安装命令 | 说明 |
-|------|----------|------|
-| `client/` | `npx expo install <package>` | Expo 会自动选择与 SDK 兼容的版本 |
-| `server/` | `pnpm add <package>` | 使用 pnpm 管理后端依赖 |
+### 打包为可执行文件
 
 ```bash
-# client 目录（Expo 项目）
-cd client && npx expo install expo-camera expo-image-picker
-
-# server 目录（Express 项目）
-cd server && pnpm add axios cors
+pip install pyinstaller>=6.0.0
+pyinstaller 楼房管理系统.spec
 ```
 
-**网络问题处理**：`npx expo install` 可能因网络原因失败，失败时重试 2 次，仍失败则改用 `pnpm add` 安装
+打包后的 `dist/楼房管理系统.exe` 可直接双击运行，无需安装 Python 环境。
 
-## Expo 开发规范
+## 📁 项目结构
 
-### 路径别名
-
-Expo 配置了 `@/` 路径别名指向 `client/` 目录：
-
-```tsx
-// 正确
-import { Screen } from '@/components/Screen';
-
-// 避免相对路径
-import { Screen } from '../../../components/Screen';
+```
+├── house_management.py      # 主程序（单文件，约 1300 行）
+├── housing_data.json        # 本地数据文件（租客、房屋、楼房数据）
+├── 楼房管理系统.spec         # PyInstaller 打包配置
+├── requirements.txt         # Python 依赖
+├── build.bat               # 构建脚本
+├── example/                # 参考示例截图（不上传 Git）
+├── medebug/                # 调试截图（不上传 Git）
+├── client/                 # Expo 前端脚手架（模板预留）
+└── server/                 # Express 后端脚手架（模板预留）
 ```
 
-## 本地开发
+## 📝 数据说明
 
-`coze dev`：用来首次启动前后端服务，也可以用来重启前后端服务（该命令会先尝试杀掉占用端口的进程，再启动服务）
+所有数据保存在程序同目录下的 `housing_data.json` 文件中，格式为 JSON。包括：
+- 楼房列表（名称、楼层数、每层房屋数、楼层编号映射）
+- 每个房屋的入住状态、租客姓名、入住日期、租金记录、备注等
+- 当前主题选择
+
+数据在程序关闭时自动保存，下次打开自动恢复。
+
+## 🔄 版本历史
+
+- **v2.2** — 横向滚动 · 楼层重命名 · 租金金额 · 多主题
+- **v2.1** — 租期管理 · 房屋转移 · 租客备注
+- **v1.0** — 基础楼房与房屋管理
+
+## 📄 许可证
+
+MIT License

@@ -95,6 +95,11 @@ logs/
 example/
 medebug/
 
+# 项目需求文档 / 临时图片
+项目要求.txt
+*.jpeg
+*.jpg
+
 # 规格工作流
 .spec-workflow/
 
