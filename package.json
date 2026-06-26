@@ -12,10 +12,10 @@
     "lint:all": "npm run lint --prefix ./client; npm run lint --prefix ./server",
     "validate": "pnpm run --parallel '/^(lint:client|lint:server)$/'"
   },
-  "dependencies": {},
-  "devDependencies": {},
   "packageManager": "pnpm@9.0.0",
   "engines": {
     "pnpm": ">=9.0.0"
+  },
+  "pnpm": {
   }
 }

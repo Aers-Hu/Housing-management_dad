@@ -61,12 +61,12 @@ export default function LoginScreen() {
 
   return (
     <Screen>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
-        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-          <View style={styles.logoWrap}>
+        <View style={styles.logoWrap}>
             <FontAwesome6 name="house" size={52} color="#6C63FF" style={styles.logo} />
             <Text style={styles.appName}>房屋管家</Text>
             <Text style={styles.subtitle}>
@@ -137,8 +137,7 @@ export default function LoginScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </ScrollView>
     </Screen>
   );
 }

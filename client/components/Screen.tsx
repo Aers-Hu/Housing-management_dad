@@ -65,13 +65,13 @@ export function Screen({
   return (
     <View style={containerStyle}>
       <StatusBar style={statusBarStyle} backgroundColor={backgroundColor} translucent={false} />
-      {Platform.OS === 'ios' ? (
-        <KeyboardAvoidingView style={styles.flex} behavior="padding" keyboardVerticalOffset={0}>
-          {content}
-        </KeyboardAvoidingView>
-      ) : (
-        content
-      )}
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        {content}
+      </KeyboardAvoidingView>
     </View>
   );
 }

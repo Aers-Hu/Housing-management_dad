@@ -149,7 +149,14 @@ export default function RoomDetailScreen() {
     setHasChanges(true);
   };
 
+  // 是否只读（无写权限）
+  const readOnly = building?.permission === 'read';
+
   const toggleRentRecord = (month: string) => {
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
     setRentRecords(prev => prev.map(r => (r.month === month ? { ...r, paid: !r.paid } : r)));
     setHasChanges(true);
   };
@@ -164,6 +171,11 @@ export default function RoomDetailScreen() {
   // 保存
   const handleSave = async () => {
     if (!room || !buildingId) return;
+
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
 
     if (isOccupied && !tenantName.trim()) {
       Alert.alert('提示', '请输入租客姓名');
@@ -211,6 +223,11 @@ export default function RoomDetailScreen() {
       return;
     }
 
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
+
     const targetRoom = allRooms.find(r => r.id === selectedTargetRoomId);
     if (!targetRoom) return;
 
@@ -252,7 +269,7 @@ export default function RoomDetailScreen() {
   }
 
   return (
-    <Screen scrollable>
+    <Screen>
       {/* 顶部导航 */}
       <View style={styles.header}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
@@ -266,6 +283,7 @@ export default function RoomDetailScreen() {
         style={styles.content}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {/* 房间信息卡片 */}
         <View style={styles.roomInfoCard}>
@@ -281,6 +299,11 @@ export default function RoomDetailScreen() {
                 {isOccupied ? '已入住' : '空置中'}
               </Text>
             </View>
+            {readOnly && (
+              <View style={styles.readOnlyBadge}>
+                <Text style={styles.readOnlyBadgeText}>只读 · 来自 {building?.ownerUsername || '其他用户'}</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -294,6 +317,7 @@ export default function RoomDetailScreen() {
               onValueChange={handleOccupiedChange}
               trackColor={{ false: '#E8E8EB', true: '#00B894' }}
               thumbColor="#FFFFFF"
+              disabled={readOnly}
             />
           </View>
         </View>
@@ -307,30 +331,32 @@ export default function RoomDetailScreen() {
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>租客姓名</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, readOnly && styles.inputReadOnly]}
                   value={tenantName}
                   onChangeText={handleTenantNameChange}
                   placeholder="请输入租客姓名"
                   placeholderTextColor="#B2BEC3"
+                  editable={!readOnly}
                 />
               </View>
 
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>每月房租 (元)</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, readOnly && styles.inputReadOnly]}
                   value={monthlyRent}
                   onChangeText={handleRentChange}
                   placeholder="请输入每月房租"
                   placeholderTextColor="#B2BEC3"
                   keyboardType="numeric"
+                  editable={!readOnly}
                 />
               </View>
 
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>租客注解</Text>
                 <TextInput
-                  style={[styles.textInput, styles.textArea]}
+                  style={[styles.textInput, styles.textArea, readOnly && styles.inputReadOnly]}
                   value={notes}
                   onChangeText={handleNotesChange}
                   placeholder="记录租客相关信息，方便日后查询（如联系方式、押金、特殊约定等）"
@@ -338,6 +364,7 @@ export default function RoomDetailScreen() {
                   multiline
                   numberOfLines={4}
                   textAlignVertical="top"
+                  editable={!readOnly}
                 />
               </View>
             </View>
@@ -382,12 +409,13 @@ export default function RoomDetailScreen() {
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>租期总月数</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, readOnly && styles.inputReadOnly]}
                   value={leaseMonths}
                   onChangeText={handleMonthsChange}
                   placeholder="请输入租期总月数"
                   placeholderTextColor="#B2BEC3"
                   keyboardType="numeric"
+                  editable={!readOnly}
                 />
               </View>
 
@@ -447,25 +475,33 @@ export default function RoomDetailScreen() {
               </View>
             )}
 
-            {/* 转移功能 */}
-            <TouchableOpacity
-              style={styles.transferButton}
-              onPress={() => setTransferModalVisible(true)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.transferButtonText}>转移租客到其他房间</Text>
-            </TouchableOpacity>
+            {/* 转移功能（只读用户不可见） */}
+            {!readOnly && (
+              <TouchableOpacity
+                style={styles.transferButton}
+                onPress={() => setTransferModalVisible(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.transferButtonText}>转移租客到其他房间</Text>
+              </TouchableOpacity>
+            )}
           </>
         )}
 
-        {/* 保存按钮 */}
-        <TouchableOpacity
-          style={[styles.saveButton, hasChanges && styles.saveButtonActive]}
-          onPress={handleSave}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.saveButtonText}>{hasChanges ? '保存修改' : '保存'}</Text>
-        </TouchableOpacity>
+        {/* 保存按钮（只读模式不可用） */}
+        {readOnly ? (
+          <View style={[styles.saveButton, styles.saveButtonReadOnly]}>
+            <Text style={[styles.saveButtonText, styles.saveButtonTextReadOnly]}>只读模式 · 无法修改</Text>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[styles.saveButton, hasChanges && styles.saveButtonActive]}
+            onPress={handleSave}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.saveButtonText}>{hasChanges ? '保存修改' : '保存'}</Text>
+          </TouchableOpacity>
+        )}
 
         <View style={styles.bottomPadding} />
       </ScrollView>
@@ -686,6 +722,19 @@ const styles = StyleSheet.create({
   },
   statusTextVacant: {
     color: '#6C63FF',
+  },
+  readOnlyBadge: {
+    backgroundColor: 'rgba(108, 99, 255, 0.1)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  readOnlyBadgeText: {
+    fontSize: 12,
+    color: '#6C63FF',
+    fontWeight: '600',
   },
   // 区块
   section: {
@@ -908,6 +957,16 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  saveButtonReadOnly: {
+    backgroundColor: '#E8E8EB',
+    opacity: 0.7,
+  },
+  saveButtonTextReadOnly: {
+    color: '#B2BEC3',
+  },
+  inputReadOnly: {
+    opacity: 0.6,
   },
   bottomPadding: {
     height: 40,

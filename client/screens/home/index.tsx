@@ -9,6 +9,8 @@ import {
   TextInput,
   Alert,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
@@ -250,6 +252,13 @@ export default function HomeScreen() {
     const b = selectedBuilding;
     setActionModalVisible(false);
 
+    if (b.permission === 'read') {
+      setTimeout(() => {
+        Alert.alert('权限不足', '你无法修改该用户的数据');
+      }, 300);
+      return;
+    }
+
     setTimeout(() => {
       Alert.alert(
         '确认删除',
@@ -299,6 +308,12 @@ export default function HomeScreen() {
   // 保存编辑
   const handleSaveEdit = async () => {
     if (!editingBuilding) return;
+
+    if (editingBuilding.permission === 'read') {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
+
     const name = editName.trim();
     const floors = parseInt(editFloors, 10);
     const roomsPerFloor = parseInt(editRoomsPerFloor, 10);
@@ -359,6 +374,8 @@ export default function HomeScreen() {
         style={styles.container}
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {/* 标题 */}
         <View style={styles.header}>
@@ -460,15 +477,19 @@ export default function HomeScreen() {
         >
           <View style={styles.actionSheet}>
             <Text style={styles.actionTitle}>{selectedBuilding?.name}</Text>
-            <TouchableOpacity style={styles.actionItem} onPress={openEditModal}>
-              <Text style={styles.actionItemText}>✏️  修改名称/层数/房间数</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.actionItem, styles.actionItemDanger]}
-              onPress={handleDeleteBuilding}
-            >
-              <Text style={[styles.actionItemText, styles.actionItemTextDanger]}>🗑️  删除楼房</Text>
-            </TouchableOpacity>
+            {selectedBuilding?.permission !== 'read' && (
+              <>
+                <TouchableOpacity style={styles.actionItem} onPress={openEditModal}>
+                  <Text style={styles.actionItemText}>✏️  修改名称/层数/房间数</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionItem, styles.actionItemDanger]}
+                  onPress={handleDeleteBuilding}
+                >
+                  <Text style={[styles.actionItemText, styles.actionItemTextDanger]}>🗑️  删除楼房</Text>
+                </TouchableOpacity>
+              </>
+            )}
             <TouchableOpacity
               style={[styles.actionItem, styles.actionItemCancel]}
               onPress={() => setActionModalVisible(false)}
@@ -487,55 +508,64 @@ export default function HomeScreen() {
         onRequestClose={() => setAddModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.formSheet}>
-            <Text style={styles.formTitle}>添加楼房</Text>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+            >
+              <View style={styles.formSheet}>
+                <Text style={styles.formTitle}>添加楼房</Text>
 
-            <Text style={styles.inputLabel}>楼房名称</Text>
-            <TextInput
-              style={styles.textInput}
-              value={newName}
-              onChangeText={setNewName}
-              placeholder="例如：A栋、1号楼"
-              placeholderTextColor="#B2BEC3"
-            />
+                <Text style={styles.inputLabel}>楼房名称</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newName}
+                  onChangeText={setNewName}
+                  placeholder="例如：A栋、1号楼"
+                  placeholderTextColor="#B2BEC3"
+                />
 
-            <Text style={styles.inputLabel}>层数</Text>
-            <TextInput
-              style={styles.textInput}
-              value={newFloors}
-              onChangeText={setNewFloors}
-              placeholder="例如：6"
-              placeholderTextColor="#B2BEC3"
-              keyboardType="numeric"
-            />
+                <Text style={styles.inputLabel}>层数</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newFloors}
+                  onChangeText={setNewFloors}
+                  placeholder="例如：6"
+                  placeholderTextColor="#B2BEC3"
+                  keyboardType="numeric"
+                />
 
-            <Text style={styles.inputLabel}>每层房间数</Text>
-            <TextInput
-              style={styles.textInput}
-              value={newRoomsPerFloor}
-              onChangeText={setNewRoomsPerFloor}
-              placeholder="例如：10"
-              placeholderTextColor="#B2BEC3"
-              keyboardType="numeric"
-            />
+                <Text style={styles.inputLabel}>每层房间数</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newRoomsPerFloor}
+                  onChangeText={setNewRoomsPerFloor}
+                  placeholder="例如：10"
+                  placeholderTextColor="#B2BEC3"
+                  keyboardType="numeric"
+                />
 
-            <View style={styles.formButtons}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setAddModalVisible(false);
-                  setNewName('');
-                  setNewFloors('');
-                  setNewRoomsPerFloor('');
-                }}
-              >
-                <Text style={styles.cancelButtonText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmButton} onPress={handleAddBuilding}>
-                <Text style={styles.confirmButtonText}>确认添加</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+                <View style={styles.formButtons}>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={() => {
+                      setAddModalVisible(false);
+                      setNewName('');
+                      setNewFloors('');
+                      setNewRoomsPerFloor('');
+                    }}
+                  >
+                    <Text style={styles.cancelButtonText}>取消</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.confirmButton} onPress={handleAddBuilding}>
+                    <Text style={styles.confirmButtonText}>确认添加</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -547,50 +577,59 @@ export default function HomeScreen() {
         onRequestClose={() => setEditModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.formSheet}>
-            <Text style={styles.formTitle}>修改楼房</Text>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+            >
+              <View style={styles.formSheet}>
+                <Text style={styles.formTitle}>修改楼房</Text>
 
-            <Text style={styles.inputLabel}>楼房名称</Text>
-            <TextInput
-              style={styles.textInput}
-              value={editName}
-              onChangeText={setEditName}
-              placeholder="楼房名称"
-              placeholderTextColor="#B2BEC3"
-            />
+                <Text style={styles.inputLabel}>楼房名称</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editName}
+                  onChangeText={setEditName}
+                  placeholder="楼房名称"
+                  placeholderTextColor="#B2BEC3"
+                />
 
-            <Text style={styles.inputLabel}>层数</Text>
-            <TextInput
-              style={styles.textInput}
-              value={editFloors}
-              onChangeText={setEditFloors}
-              placeholder="层数"
-              placeholderTextColor="#B2BEC3"
-              keyboardType="numeric"
-            />
+                <Text style={styles.inputLabel}>层数</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editFloors}
+                  onChangeText={setEditFloors}
+                  placeholder="层数"
+                  placeholderTextColor="#B2BEC3"
+                  keyboardType="numeric"
+                />
 
-            <Text style={styles.inputLabel}>每层房间数</Text>
-            <TextInput
-              style={styles.textInput}
-              value={editRoomsPerFloor}
-              onChangeText={setEditRoomsPerFloor}
-              placeholder="每层房间数"
-              placeholderTextColor="#B2BEC3"
-              keyboardType="numeric"
-            />
+                <Text style={styles.inputLabel}>每层房间数</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editRoomsPerFloor}
+                  onChangeText={setEditRoomsPerFloor}
+                  placeholder="每层房间数"
+                  placeholderTextColor="#B2BEC3"
+                  keyboardType="numeric"
+                />
 
-            <View style={styles.formButtons}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setEditModalVisible(false)}
-              >
-                <Text style={styles.cancelButtonText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmButton} onPress={handleSaveEdit}>
-                <Text style={styles.confirmButtonText}>保存修改</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+                <View style={styles.formButtons}>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={() => setEditModalVisible(false)}
+                  >
+                    <Text style={styles.cancelButtonText}>取消</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.confirmButton} onPress={handleSaveEdit}>
+                    <Text style={styles.confirmButtonText}>保存修改</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -645,30 +684,34 @@ export default function HomeScreen() {
         onRequestClose={() => setRequestModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>申请查看他人楼房</Text>
-            <Text style={styles.modalDesc}>输入对方用户名，对方同意后你可查看其全部楼房</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={requestUsername}
-              onChangeText={setRequestUsername}
-              placeholder="对方的用户名"
-              placeholderTextColor="#B2BEC3"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnCancel]}
-                onPress={() => { setRequestModalVisible(false); setRequestUsername(''); }}
-              >
-                <Text style={styles.modalBtnCancelText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={submitRequest}>
-                <Text style={styles.modalBtnPrimaryText}>发送申请</Text>
-              </TouchableOpacity>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>申请查看他人楼房</Text>
+              <Text style={styles.modalDesc}>输入对方用户名，对方同意后你可查看其全部楼房</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={requestUsername}
+                onChangeText={setRequestUsername}
+                placeholder="对方的用户名"
+                placeholderTextColor="#B2BEC3"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <View style={styles.modalBtnRow}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalBtnCancel]}
+                  onPress={() => { setRequestModalVisible(false); setRequestUsername(''); }}
+                >
+                  <Text style={styles.modalBtnCancelText}>取消</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={submitRequest}>
+                  <Text style={styles.modalBtnPrimaryText}>发送申请</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 

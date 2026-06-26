@@ -167,6 +167,27 @@ def set_rent(rent_paid, month_key, paid=None, amount=None):
     if amount is not None: entry["amount"] = amount
     rent_paid[month_key] = entry
 
+def month_key_from_lease(lease_start, month_index):
+    """根据租期开始日期和月份序号生成 YYYY-MM 格式键（与手机端统一）。
+    month_index 从 1 开始。
+    若 lease_start 无效，回退到纯数字键（兼容旧数据）。"""
+    if not lease_start:
+        return str(month_index)
+    try:
+        parts = lease_start.split('-')
+        if len(parts) < 2:
+            return str(month_index)
+        year = int(parts[0])
+        month = int(parts[1])
+        # 月份累加：以 lease_start 的月份为基准
+        total = year * 12 + month - 1 + month_index - 1
+        y = total // 12
+        m = total % 12 + 1
+        return f"{y}-{m:02d}"
+    except Exception:
+        return str(month_index)
+
+
 def migrate_rent_paid(rent_paid):
     """迁移旧格式 rent_paid（bool → {paid, amount}），同时处理 None"""
     if not rent_paid:
@@ -855,15 +876,18 @@ class RoomDialog(tk.Toplevel):
                    canvas_bg=C["bg"]).pack(pady=2)
 
     def _apply_default_amount(self):
-        """将默认金额应用到所有月份"""
+        """将默认金额应用到所有月份（使用 YYYY-MM 键与手机端统一）"""
         try:
             amt = int(self.default_amount_var.get().strip())
         except ValueError:
             messagebox.showwarning("提示", "请输入有效金额", parent=self); return
         months = self.lease_months_var.get()
         rp = self.room.setdefault("rent_paid", {})
+        # 同时更新 _monthly_rent 以保证保存时写回服务器
+        self.room["_monthly_rent"] = amt
+        lease_start = self.room.get("lease_start", "")
         for m in range(1, months+1):
-            k = str(m)
+            k = month_key_from_lease(lease_start, m)
             old_paid = rent_is_paid(rp, k)
             set_rent(rp, k, paid=old_paid, amount=amt)
         self._refresh_rent()
@@ -895,6 +919,10 @@ class RoomDialog(tk.Toplevel):
         self.lease_start_var.set(self.room.get("lease_start",""))
         self.lease_months_var.set(self.room.get("lease_months",1))
         self.notes.insert("1.0", self.room.get("notes",""))
+        # 从服务器同步的 monthlyRent 初始化默认月租金输入框
+        mr = self.room.get("_monthly_rent", 0)
+        if mr:
+            self.default_amount_var.set(str(mr))
         self._toggle_occ(); self._refresh_rent(); self._update_lease()
         self.lease_months_var.trace_add("write",
             lambda *a: (self._update_lease(), self._refresh_rent()))
@@ -923,8 +951,12 @@ class RoomDialog(tk.Toplevel):
             rp = {}
             self.room["rent_paid"] = rp
 
+        # 使用 YYYY-MM 格式（与手机端统一），若租期未设置则回退到数字键
+        lease_start = self.room.get("lease_start", "")
+
         for i in range(months):
-            m = i + 1; k = str(m)
+            m = i + 1
+            k = month_key_from_lease(lease_start, m)
             is_p = rent_is_paid(rp, k)
             amt = rent_amount(rp, k)
 
@@ -995,6 +1027,13 @@ class RoomDialog(tk.Toplevel):
         self.room["lease_start"] = normalize_date_str(self.lease_start_var.get().strip())
         self.room["lease_months"] = self.lease_months_var.get()
         self.room["notes"] = self.notes.get("1.0", tk.END).strip()
+        # 同步默认月租金到 _monthly_rent（回写服务器用）
+        try:
+            dmr = int(self.default_amount_var.get().strip())
+            if dmr > 0:
+                self.room["_monthly_rent"] = dmr
+        except ValueError:
+            pass
 
     def _save(self):
         self._apply()

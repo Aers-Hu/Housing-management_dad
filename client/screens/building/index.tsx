@@ -8,6 +8,8 @@ import {
   TextInput,
   Alert,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
   RefreshControl,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
@@ -74,8 +76,15 @@ export default function BuildingScreen() {
     router.push('/room', { buildingId, roomId });
   };
 
-  // 长按房间 → 命名
+  // 是否只读（无写权限）
+  const readOnly = building?.permission === 'read';
+
+  // 长按房间 → 命名（只读不可用）
   const handleRoomLongPress = (room: Room) => {
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
     setNamingRoom(room);
     setRoomNewName(room.name);
     setNameModalVisible(true);
@@ -84,6 +93,10 @@ export default function BuildingScreen() {
   // 保存房间名称
   const handleSaveRoomName = async () => {
     if (!namingRoom) return;
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
     const updated: Room = { ...namingRoom, name: roomNewName.trim() };
     await StorageService.updateRoom(updated);
     setNameModalVisible(false);
@@ -106,6 +119,10 @@ export default function BuildingScreen() {
   // 保存楼层号
   const handleSaveFloorLabels = async () => {
     if (!building) return;
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
     const labels: Record<number, string> = {};
     for (const [floorStr, label] of Object.entries(floorLabelDraft)) {
       const floor = Number(floorStr);
@@ -133,6 +150,10 @@ export default function BuildingScreen() {
   // 保存批量命名
   const handleSaveBatchNames = async () => {
     if (!buildingId) return;
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
     const updates = Object.entries(batchNameDraft).map(([id, name]) => ({ id, name: name.trim() }));
     await StorageService.batchUpdateRooms(buildingId, updates);
     setBatchModalVisible(false);
@@ -158,15 +179,20 @@ export default function BuildingScreen() {
         style={styles.container}
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {/* 顶部导航 */}
         <View style={styles.header}>
           <TouchableOpacity onPress={handleBack} style={styles.backButton}>
             <Text style={styles.backText}>← 返回</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setEditMenuVisible(true)} style={styles.editBuildingButton}>
-            <Text style={styles.editBuildingText}>编辑楼房</Text>
-          </TouchableOpacity>
+          {!readOnly && (
+            <TouchableOpacity onPress={() => setEditMenuVisible(true)} style={styles.editBuildingButton}>
+              <Text style={styles.editBuildingText}>编辑楼房</Text>
+            </TouchableOpacity>
+          )}
+          {readOnly && <View style={styles.editBuildingButton} />}
         </View>
 
         {/* 楼房信息 */}
@@ -175,6 +201,11 @@ export default function BuildingScreen() {
           <Text style={styles.buildingConfig}>
             {building.floors} 层 · 每层 {building.roomsPerFloor} 间 · 共 {stats.total} 间
           </Text>
+          {readOnly && (
+            <View style={styles.readOnlyBadge}>
+              <Text style={styles.readOnlyBadgeText}>只读 · 来自 {building.ownerUsername || '其他用户'}</Text>
+            </View>
+          )}
         </View>
 
         {/* 统计卡片 */}
@@ -262,30 +293,34 @@ export default function BuildingScreen() {
         onRequestClose={() => setNameModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.nameModalContent}>
-            <Text style={styles.nameModalTitle}>
-              命名房间 {namingRoom?.number}
-            </Text>
-            <TextInput
-              style={styles.nameInput}
-              value={roomNewName}
-              onChangeText={setRoomNewName}
-              placeholder="例如：主卧、储物间"
-              placeholderTextColor="#B2BEC3"
-              autoFocus
-            />
-            <View style={styles.nameModalButtons}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setNameModalVisible(false)}
-              >
-                <Text style={styles.cancelBtnText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveRoomName}>
-                <Text style={styles.saveBtnText}>保存</Text>
-              </TouchableOpacity>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View style={styles.nameModalContent}>
+              <Text style={styles.nameModalTitle}>
+                命名房间 {namingRoom?.number}
+              </Text>
+              <TextInput
+                style={styles.nameInput}
+                value={roomNewName}
+                onChangeText={setRoomNewName}
+                placeholder="例如：主卧、储物间"
+                placeholderTextColor="#B2BEC3"
+                autoFocus
+              />
+              <View style={styles.nameModalButtons}>
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setNameModalVisible(false)}
+                >
+                  <Text style={styles.cancelBtnText}>取消</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveRoomName}>
+                  <Text style={styles.saveBtnText}>保存</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -327,10 +362,16 @@ export default function BuildingScreen() {
         onRequestClose={() => setFloorLabelModalVisible(false)}
       >
         <View style={styles.sheetOverlay}>
-          <View style={styles.formSheet}>
-            <Text style={styles.formTitle}>修改楼层号</Text>
-            <Text style={styles.formHint}>设置每一层显示的楼层号（例如把第 1 层显示为「2」）</Text>
-            <ScrollView style={styles.editList}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View style={styles.formSheet}>
+              <Text style={styles.formTitle}>修改楼层号</Text>
+              <Text style={styles.formHint}>设置每一层显示的楼层号（例如把第 1 层显示为「2」）</Text>
+              <ScrollView
+                style={styles.editList}
+                keyboardShouldPersistTaps="handled"
+              >
               {building && Array.from({ length: building.floors }, (_, i) => building.floors - i).map((floor) => (
                 <View key={floor} style={styles.editRow}>
                   <Text style={styles.editRowLabel}>第 {floor} 层</Text>
@@ -354,7 +395,8 @@ export default function BuildingScreen() {
                 <Text style={styles.saveBtnText}>保存</Text>
               </TouchableOpacity>
             </View>
-          </View>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -366,10 +408,16 @@ export default function BuildingScreen() {
         onRequestClose={() => setBatchModalVisible(false)}
       >
         <View style={styles.sheetOverlay}>
-          <View style={styles.formSheet}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View style={styles.formSheet}>
             <Text style={styles.formTitle}>批量命名房间</Text>
             <Text style={styles.formHint}>留空则显示原房间号</Text>
-            <ScrollView style={styles.editList}>
+            <ScrollView
+                style={styles.editList}
+                keyboardShouldPersistTaps="handled"
+              >
               {floors.map((floor) => {
                 const floorRooms = groupedRooms.get(floor) || [];
                 return (
@@ -401,6 +449,7 @@ export default function BuildingScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </Screen>
@@ -466,6 +515,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.8)',
     marginTop: 4,
+  },
+  readOnlyBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  readOnlyBadgeText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '600',
   },
   // 统计卡片
   statsContainer: {
