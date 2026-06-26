@@ -74,6 +74,28 @@ export interface AccountGrant {
 // 当前用户对某楼房的权限
 export type AccessLevel = 'owner' | 'write' | 'read' | null;
 
+// ---- 待审改动（手机端离线重放，待 owner 批准）----
+// 单条字段级差异：用于电脑端弹窗展示「变动了什么」
+export interface PendingDiffItem {
+  field: string;        // 字段名（如 tenantName）
+  label: string;        // 人类可读标签（如 "租客姓名"）
+  before: string;       // 变动前（已转为可读字符串）
+  after: string;        // 变动后（已转为可读字符串）
+}
+
+export interface PendingChange {
+  id: string;
+  ownerId: string;      // 审批人（房间所属楼房的 owner）
+  buildingId: string;
+  roomId: string;
+  submitterId: string;  // 提交改动的用户
+  proposed: Room;       // 完整提议的房间状态
+  diff: PendingDiffItem[];
+  submitterIp?: string;
+  deviceModel?: string;
+  createdAt: string;
+}
+
 // ---- 楼房 + 房间打包（同步用）----
 export interface BuildingWithRooms extends Building {
   rooms: Room[];

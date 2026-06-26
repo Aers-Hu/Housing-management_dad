@@ -25,11 +25,16 @@ import {
   setGranteeWrite, revokeGrantee, type AccessRequestItem, type GranteeItem,
 } from '@/utils/comm';
 import { NetworkError, ApiError } from '@/utils/api';
+import { listAccounts, removeAccount, type SavedAccount } from '@/utils/accounts';
 
 export default function HomeScreen() {
   const router = useSafeRouter();
-  const { user, logout } = useAuth();
+  const { user, logout, switchAccount } = useAuth();
   const [userMenuVisible, setUserMenuVisible] = useState(false);
+  // 切换账号
+  const [switchVisible, setSwitchVisible] = useState(false);
+  const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
+  const [switching, setSwitching] = useState(false);
   // 通讯相关
   const [requestModalVisible, setRequestModalVisible] = useState(false);
   const [requestUsername, setRequestUsername] = useState('');
@@ -221,12 +226,58 @@ export default function HomeScreen() {
     ]);
   };
 
-  const handleSwitchAccount = () => {
+  const handleSwitchAccount = async () => {
     setUserMenuVisible(false);
-    Alert.alert('切换账号', '将退出当前账号并返回登录页，确定吗？', [
-      { text: '取消', style: 'cancel' },
-      { text: '切换', onPress: () => { logout(); } },
-    ]);
+    const accounts = await listAccounts();
+    setSavedAccounts(accounts);
+    setTimeout(() => setSwitchVisible(true), 250);
+  };
+
+  // 免密切换到某账号；token 失效仅提示（不自动跳登录页）
+  const doSwitchAccount = async (account: SavedAccount) => {
+    if (account.username === user?.username) {
+      setSwitchVisible(false);
+      return;
+    }
+    setSwitching(true);
+    try {
+      await switchAccount(account);
+      setSwitchVisible(false);
+      Toast.show({ type: 'success', text1: `已切换到 ${account.username}` });
+    } catch (e) {
+      if (e instanceof NetworkError) {
+        Toast.show({ type: 'error', text1: '连不上该账号的服务器，请检查网络' });
+      } else if (e instanceof ApiError) {
+        Toast.show({
+          type: 'error',
+          text1: '该账号登录已过期',
+          text2: '请退出后用该账号重新登录',
+        });
+      } else {
+        Toast.show({ type: 'error', text1: '切换失败' });
+      }
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  // 从本地账号簿移除某账号
+  const doRemoveAccount = (account: SavedAccount) => {
+    Alert.alert(
+      '移除账号',
+      `确定把「${account.username}」从本设备账号簿移除吗？\n（不影响服务器账号，只是本机不再保存其登录）`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '移除',
+          style: 'destructive',
+          onPress: async () => {
+            await removeAccount(account.username, account.serverUrl);
+            setSavedAccounts(await listAccounts());
+          },
+        },
+      ],
+    );
   };
 
   // 长按 → 弹出操作菜单
@@ -676,6 +727,80 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* 切换账号：列出本设备登录过的账号，点选免密切换 */}
+      <Modal
+        visible={switchVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSwitchVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !switching && setSwitchVisible(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.actionSheet}>
+            <View style={styles.userMenuHeader}>
+              <FontAwesome6 name="users" size={26} color="#6C63FF" />
+              <Text style={styles.userMenuName}>切换账号</Text>
+              <Text style={styles.userMenuHint}>30 天内免密切换登录过的账号</Text>
+            </View>
+
+            {savedAccounts.length === 0 && (
+              <Text style={styles.switchEmpty}>暂无已保存的账号</Text>
+            )}
+
+            {savedAccounts.map((acc) => {
+              const isCurrent = acc.username === user?.username;
+              return (
+                <View key={`${acc.username}@${acc.serverUrl}`} style={styles.switchRow}>
+                  <TouchableOpacity
+                    style={styles.switchRowMain}
+                    disabled={isCurrent || switching}
+                    onPress={() => doSwitchAccount(acc)}
+                  >
+                    <FontAwesome6
+                      name={isCurrent ? 'circle-check' : 'circle-user'}
+                      size={20}
+                      color={isCurrent ? '#6C63FF' : '#636E72'}
+                    />
+                    <View style={styles.switchRowText}>
+                      <Text style={[styles.switchRowName, isCurrent && styles.switchRowNameCurrent]}>
+                        {acc.username}{isCurrent ? '（当前）' : ''}
+                      </Text>
+                      <Text style={styles.switchRowServer} numberOfLines={1}>{acc.serverUrl}</Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.switchRemoveBtn}
+                    disabled={switching}
+                    onPress={() => doRemoveAccount(acc)}
+                  >
+                    <FontAwesome6 name="trash-can" size={15} color="#E74C3C" />
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+
+            <TouchableOpacity
+              style={[styles.actionItem, styles.userMenuItem]}
+              disabled={switching}
+              onPress={() => { setSwitchVisible(false); logout(); }}
+            >
+              <FontAwesome6 name="plus" size={15} color="#6C63FF" />
+              <Text style={[styles.actionItemText, { color: '#6C63FF' }]}>登录其他账号</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemCancel]}
+              disabled={switching}
+              onPress={() => setSwitchVisible(false)}
+            >
+              <Text style={styles.actionItemText}>{switching ? '切换中…' : '取消'}</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* 申请查看他人楼房 */}
       <Modal
         visible={requestModalVisible}
@@ -1056,6 +1181,46 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#B2BEC3',
     marginTop: 2,
+  },
+  // 切换账号
+  switchEmpty: {
+    fontSize: 14,
+    color: '#B2BEC3',
+    textAlign: 'center',
+    paddingVertical: 24,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F3',
+  },
+  switchRowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    gap: 12,
+  },
+  switchRowText: {
+    flex: 1,
+  },
+  switchRowName: {
+    fontSize: 16,
+    color: '#2D3436',
+    fontWeight: '600',
+  },
+  switchRowNameCurrent: {
+    color: '#6C63FF',
+  },
+  switchRowServer: {
+    fontSize: 12,
+    color: '#B2BEC3',
+    marginTop: 2,
+  },
+  switchRemoveBtn: {
+    padding: 12,
   },
   // 楼房卡片
   buildingCard: {

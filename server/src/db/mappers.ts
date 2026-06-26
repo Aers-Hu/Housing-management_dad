@@ -1,4 +1,4 @@
-import type { Building, Room, AccessRequest, AccountGrant, User, RentRecord } from '../types.ts';
+import type { Building, Room, AccessRequest, AccountGrant, User, RentRecord, PendingChange } from '../types.ts';
 
 // ============================================================
 // DB 行(snake_case) <-> API 对象(camelCase) 互转
@@ -58,6 +58,25 @@ export function rowToAccountGrant(r: any): AccountGrant {
     ownerId: r.owner_id,
     granteeId: r.grantee_id,
     canWrite: !!r.can_write,
+    createdAt: r.created_at,
+  };
+}
+
+export function rowToPendingChange(r: any): PendingChange {
+  let proposed: any = {};
+  let diff: any[] = [];
+  try { proposed = JSON.parse(r.proposed); } catch { proposed = {}; }
+  try { diff = JSON.parse(r.diff); } catch { diff = []; }
+  return {
+    id: r.id,
+    ownerId: r.owner_id,
+    buildingId: r.building_id,
+    roomId: r.room_id,
+    submitterId: r.submitter_id,
+    proposed,
+    diff,
+    submitterIp: r.submitter_ip ?? undefined,
+    deviceModel: r.device_model ?? undefined,
     createdAt: r.created_at,
   };
 }

@@ -5,11 +5,10 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { Screen } from '@/components/Screen';
@@ -25,6 +24,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showServer, setShowServer] = useState(false);
+  const [focused, setFocused] = useState<'username' | 'password' | 'server' | null>(null);
 
   useEffect(() => {
     getServerUrl().then(setServer);
@@ -59,84 +59,119 @@ export default function LoginScreen() {
     }
   };
 
+  const inputStyle = (field: 'username' | 'password' | 'server') => [
+    styles.input,
+    focused === field && styles.inputFocused,
+  ];
+
   return (
-    <Screen>
+    <Screen backgroundColor="#6C63FF" statusBarStyle="light">
+      <LinearGradient
+        colors={['#6C63FF', '#8472FF', '#A99BFF']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.logoWrap}>
-            <FontAwesome6 name="house" size={52} color="#6C63FF" style={styles.logo} />
-            <Text style={styles.appName}>房屋管家</Text>
-            <Text style={styles.subtitle}>
-              {mode === 'login' ? '登录后多设备同步数据' : '创建账号'}
-            </Text>
+        {/* 渐变英雄区 */}
+        <View style={styles.hero}>
+          <View style={styles.logoCircle}>
+            <FontAwesome6 name="house" size={38} color="#FFFFFF" />
           </View>
+          <Text style={styles.appName}>房屋管家</Text>
+          <Text style={styles.heroSubtitle}>
+            {mode === 'login' ? '登录后多设备同步数据' : '创建你的账号'}
+          </Text>
+        </View>
 
-          <View style={styles.card}>
-            <Text style={styles.label}>用户名</Text>
+        {/* 悬浮卡片 */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>{mode === 'login' ? '欢迎回来' : '注册新账号'}</Text>
+
+          <Text style={styles.label}>用户名</Text>
+          <View style={inputStyle('username')}>
+            <FontAwesome6 name="user" size={14} color="#A99BFF" style={styles.inputIcon} />
             <TextInput
-              style={styles.input}
+              style={styles.inputText}
               value={username}
               onChangeText={setUsername}
+              onFocus={() => setFocused('username')}
+              onBlur={() => setFocused(null)}
               placeholder="3-30 位字母、数字或下划线"
               placeholderTextColor="#B2BEC3"
               autoCapitalize="none"
               autoCorrect={false}
             />
+          </View>
 
-            <Text style={styles.label}>密码</Text>
+          <Text style={styles.label}>密码</Text>
+          <View style={inputStyle('password')}>
+            <FontAwesome6 name="lock" size={14} color="#A99BFF" style={styles.inputIcon} />
             <TextInput
-              style={styles.input}
+              style={styles.inputText}
               value={password}
               onChangeText={setPassword}
+              onFocus={() => setFocused('password')}
+              onBlur={() => setFocused(null)}
               placeholder="至少 6 位"
               placeholderTextColor="#B2BEC3"
               secureTextEntry
               autoCapitalize="none"
             />
+          </View>
 
-            {/* 服务器地址（可折叠，默认隐藏） */}
-            <TouchableOpacity onPress={() => setShowServer((v) => !v)}>
-              <Text style={styles.serverToggle}>
-                {showServer ? '▼ 收起服务器设置' : '▷ 服务器设置'}
-              </Text>
-            </TouchableOpacity>
-            {showServer && (
-              <>
-                <Text style={styles.label}>服务器地址</Text>
+          {/* 服务器地址（可折叠，默认隐藏） */}
+          <TouchableOpacity onPress={() => setShowServer((v) => !v)} activeOpacity={0.7}>
+            <Text style={styles.serverToggle}>
+              <FontAwesome6 name={showServer ? 'chevron-down' : 'chevron-right'} size={11} color="#6C63FF" />
+              {'  '}服务器设置
+            </Text>
+          </TouchableOpacity>
+          {showServer && (
+            <>
+              <Text style={styles.label}>服务器地址</Text>
+              <View style={inputStyle('server')}>
+                <FontAwesome6 name="server" size={13} color="#A99BFF" style={styles.inputIcon} />
                 <TextInput
-                  style={styles.input}
+                  style={styles.inputText}
                   value={server}
                   onChangeText={setServer}
+                  onFocus={() => setFocused('server')}
+                  onBlur={() => setFocused(null)}
                   placeholder="如 http://192.168.1.10:9091"
                   placeholderTextColor="#B2BEC3"
                   autoCapitalize="none"
                   autoCorrect={false}
                   keyboardType="url"
                 />
-              </>
+              </View>
+            </>
+          )}
+
+          <TouchableOpacity
+            style={[styles.button, submitting && styles.buttonDisabled]}
+            onPress={handleSubmit}
+            disabled={submitting}
+            activeOpacity={0.85}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.buttonText}>{mode === 'login' ? '登 录' : '注 册'}</Text>
             )}
+          </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.button, submitting && styles.buttonDisabled]}
-              onPress={handleSubmit}
-              disabled={submitting}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.buttonText}>{mode === 'login' ? '登 录' : '注 册'}</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => setMode((m) => (m === 'login' ? 'register' : 'login'))}>
-              <Text style={styles.switchText}>
-                {mode === 'login' ? '没有账号？去注册' : '已有账号？去登录'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity onPress={() => setMode((m) => (m === 'login' ? 'register' : 'login'))} activeOpacity={0.7}>
+            <Text style={styles.switchText}>
+              {mode === 'login' ? '没有账号？去注册' : '已有账号？去登录'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </Screen>
   );
@@ -148,46 +183,73 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-  logoWrap: {
+  hero: {
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 28,
   },
-  logo: {
-    marginBottom: 8,
+  logoCircle: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   appName: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#2D3436',
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 1,
   },
-  subtitle: {
+  heroSubtitle: {
     fontSize: 14,
-    color: '#636E72',
-    marginTop: 6,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 8,
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    borderRadius: 24,
+    padding: 26,
+    shadowColor: '#1A1A4A',
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
+  cardTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#2D3436',
+    marginBottom: 8,
   },
   label: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#636E72',
     marginBottom: 6,
-    marginTop: 12,
+    marginTop: 14,
   },
   input: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E8E8EB',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F6F6FB',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#EDEDF5',
     paddingHorizontal: 14,
-    paddingVertical: 12,
+  },
+  inputFocused: {
+    borderColor: '#6C63FF',
+    backgroundColor: '#FFFFFF',
+  },
+  inputIcon: {
+    marginRight: 10,
+  },
+  inputText: {
+    flex: 1,
+    paddingVertical: 13,
     fontSize: 16,
     color: '#2D3436',
   },
@@ -195,18 +257,19 @@ const styles = StyleSheet.create({
     color: '#6C63FF',
     fontSize: 13,
     marginTop: 16,
+    fontWeight: '500',
   },
   button: {
     backgroundColor: '#6C63FF',
-    borderRadius: 12,
-    paddingVertical: 15,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: 26,
     shadowColor: '#6C63FF',
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -214,13 +277,14 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#FFFFFF',
     fontSize: 17,
-    fontWeight: '600',
-    letterSpacing: 2,
+    fontWeight: '700',
+    letterSpacing: 3,
   },
   switchText: {
     color: '#6C63FF',
     textAlign: 'center',
-    marginTop: 18,
+    marginTop: 20,
     fontSize: 14,
+    fontWeight: '500',
   },
 });

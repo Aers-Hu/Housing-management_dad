@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { db } from './index.ts';
-import { rowToBuilding, rowToRoom, rowToAccessRequest, rowToAccountGrant, rowToUser } from './mappers.ts';
-import type { Building, Room, AccessRequest, AccountGrant, User, AccessLevel } from '../types.ts';
+import { rowToBuilding, rowToRoom, rowToAccessRequest, rowToAccountGrant, rowToUser, rowToPendingChange } from './mappers.ts';
+import type { Building, Room, AccessRequest, AccountGrant, User, AccessLevel, PendingChange, PendingDiffItem } from '../types.ts';
 
 const genId = (prefix: string) => `${prefix}_${randomUUID()}`;
 
@@ -305,6 +305,69 @@ export const AccountGrants = {
   revoke(ownerId: string, granteeId: string): void {
     db.prepare('DELETE FROM account_grants WHERE owner_id = ? AND grantee_id = ?')
       .run(ownerId, granteeId);
+  },
+};
+
+// ============================================================
+// PendingChanges（待审改动：手机端离线重放先入此表，owner 逐条批准）
+// ============================================================
+export const PendingChanges = {
+  create(args: {
+    ownerId: string;
+    buildingId: string;
+    roomId: string;
+    submitterId: string;
+    proposed: Room;
+    diff: PendingDiffItem[];
+    submitterIp?: string;
+    deviceModel?: string;
+  }): PendingChange {
+    const id = genId('pend');
+    const createdAt = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO pending_changes
+        (id, owner_id, building_id, room_id, submitter_id, proposed, diff, submitter_ip, device_model, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      args.ownerId,
+      args.buildingId,
+      args.roomId,
+      args.submitterId,
+      JSON.stringify(args.proposed),
+      JSON.stringify(args.diff),
+      args.submitterIp ?? null,
+      args.deviceModel ?? null,
+      createdAt
+    );
+    return this.findById(id)!;
+  },
+
+  // 某 owner 名下的全部待审，按时间正序（便于电脑端逐条处理），附楼房名与房间号
+  listForOwner(ownerId: string): (PendingChange & { buildingName: string; roomNumber: string })[] {
+    const rows: any[] = db
+      .prepare(
+        `SELECT p.*, b.name AS _bld_name, r.number AS _room_number
+         FROM pending_changes p
+         JOIN buildings b ON b.id = p.building_id
+         JOIN rooms r     ON r.id = p.room_id
+         WHERE p.owner_id = ? ORDER BY p.created_at ASC`
+      )
+      .all(ownerId);
+    return rows.map((r) => ({
+      ...rowToPendingChange(r),
+      buildingName: r._bld_name,
+      roomNumber: r._room_number,
+    }));
+  },
+
+  findById(id: string): PendingChange | null {
+    const r: any = db.prepare('SELECT * FROM pending_changes WHERE id = ?').get(id);
+    return r ? rowToPendingChange(r) : null;
+  },
+
+  delete(id: string): void {
+    db.prepare('DELETE FROM pending_changes WHERE id = ?').run(id);
   },
 };
 

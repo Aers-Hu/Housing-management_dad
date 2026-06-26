@@ -102,12 +102,32 @@ export function initSchema(): void {
       FOREIGN KEY (grantee_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    -- 待审改动：手机端断网重连后重放的房间改动先落此表，由楼房 owner 在电脑端逐条批准后才落主库。
+    -- proposed/diff 均为 JSON 字符串；submitter_ip/device_model 供电脑端弹窗显示来源。
+    CREATE TABLE IF NOT EXISTS pending_changes (
+      id            TEXT PRIMARY KEY,
+      owner_id      TEXT NOT NULL,           -- 该房间所属楼房的 owner（审批人）
+      building_id   TEXT NOT NULL,
+      room_id       TEXT NOT NULL,
+      submitter_id  TEXT NOT NULL,           -- 提交改动的用户（手机端登录用户）
+      proposed      TEXT NOT NULL,           -- JSON：完整提议的房间状态（套用时直接用）
+      diff          TEXT NOT NULL,           -- JSON：字段级差异 [{field,label,before,after}]
+      submitter_ip  TEXT,                    -- 提交者 IP（电脑端再转城市）
+      device_model  TEXT,                    -- 提交设备型号
+      created_at    TEXT NOT NULL,
+      FOREIGN KEY (owner_id)    REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (building_id) REFERENCES buildings(id) ON DELETE CASCADE,
+      FOREIGN KEY (room_id)     REFERENCES rooms(id) ON DELETE CASCADE,
+      FOREIGN KEY (submitter_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_buildings_owner   ON buildings(owner_id);
     CREATE INDEX IF NOT EXISTS idx_rooms_building     ON rooms(building_id);
     CREATE INDEX IF NOT EXISTS idx_areq_owner         ON access_requests(owner_id);
     CREATE INDEX IF NOT EXISTS idx_areq_requester     ON access_requests(requester_id);
     CREATE INDEX IF NOT EXISTS idx_agrant_grantee     ON account_grants(grantee_id);
     CREATE INDEX IF NOT EXISTS idx_agrant_owner       ON account_grants(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_pending_owner      ON pending_changes(owner_id, created_at);
   `);
 }
 

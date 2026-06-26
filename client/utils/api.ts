@@ -45,12 +45,13 @@ interface RequestOpts {
   body?: unknown;
   auth?: boolean; // 是否带 token，默认 true
   timeoutMs?: number;
+  headers?: Record<string, string>; // 额外请求头（如离线重放标记、设备型号）
 }
 
 export async function apiRequest<T = any>(path: string, opts: RequestOpts = {}): Promise<T> {
   // 已知离线时用更短超时，避免读操作/探测干等；在线默认 10s 容忍慢网络
   const defaultTimeout = isOnline() ? 10000 : 3500;
-  const { method = 'GET', body, auth = true, timeoutMs = defaultTimeout } = opts;
+  const { method = 'GET', body, auth = true, timeoutMs = defaultTimeout, headers: extraHeaders } = opts;
   const base = await getApiBase();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
@@ -58,6 +59,8 @@ export async function apiRequest<T = any>(path: string, opts: RequestOpts = {}):
     const token = await getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
   }
+  // 额外请求头（调用方传入，覆盖在默认头之上）
+  if (extraHeaders) Object.assign(headers, extraHeaders);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

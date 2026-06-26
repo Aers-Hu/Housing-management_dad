@@ -8,11 +8,93 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import json, os, sys, copy
+import threading
+import urllib.request, urllib.error
 from datetime import datetime, timedelta
 import calendar
 
 from api_client import (ClientConfig, ApiClient, NetworkError, ApiError,
                         server_building_to_py, py_room_to_server_body)
+
+# ============================================================
+# IP -> 人类可读地理位置（待审弹窗显示提交来源用）
+#
+# 三种情况：
+# - 回环/隧道地址（127.x / ::1 / ::ffff:127.x）：经 TCP 隧道转发的外网请求会落到这里，
+#   拿不到手机真实公网 IP，显示「经隧道接入（无法定位真实位置）」。
+# - 真正的私有局域网地址（192.168.x / 10.x / 172.16-31.x，同 WiFi 时常见）：显示「家庭局域网」。
+# - 公网地址：调用 ip-api.com 免费接口（免密钥、支持中文）查城市，失败则回退显示原始 IP。
+# 结果带内存缓存，避免同一 IP 反复查询。后台线程查，绝不阻塞界面。
+# ============================================================
+_GEO_CACHE = {}
+
+def _is_loopback_ip(ip):
+    """回环/未指定地址：经 TCP 隧道转发的外网请求在服务端会显示为这类地址。"""
+    if not ip:
+        return True
+    ip = ip.strip().lower()
+    if ip in ("localhost", "0.0.0.0", "::", "::1"):
+        return True
+    # IPv4 回环 127.0.0.0/8，含 IPv4-mapped IPv6（::ffff:127.x.x.x）
+    v4 = ip[len("::ffff:"):] if ip.startswith("::ffff:") else ip
+    if v4.startswith("127."):
+        return True
+    return False
+
+def _is_private_ip(ip):
+    """判断是否为私有/链路本地地址（局域网内，无法地理定位）。不含回环（回环单独判）。"""
+    if not ip:
+        return False
+    ip = ip.strip()
+    if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("169.254."):
+        return True
+    if ip.startswith("172."):
+        try:
+            second = int(ip.split(".")[1])
+            if 16 <= second <= 31:
+                return True
+        except (ValueError, IndexError):
+            pass
+    # IPv6 私有/链路本地段
+    low = ip.lower()
+    if low.startswith("fe80:") or low.startswith("fc") or low.startswith("fd"):
+        return True
+    return False
+
+def resolve_ip_location(ip):
+    """把 IP 转为人类可读地址。同步调用（应在后台线程里用）。带缓存。"""
+    if ip in _GEO_CACHE:
+        return _GEO_CACHE[ip]
+    if _is_loopback_ip(ip):
+        result = "经隧道接入（无法定位真实位置）"
+        _GEO_CACHE[ip] = result
+        return result
+    if _is_private_ip(ip):
+        result = "家庭局域网（同一网络内）"
+        _GEO_CACHE[ip] = result
+        return result
+    try:
+        url = f"http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,regionName,city,isp"
+        req = urllib.request.Request(url, headers={"User-Agent": "house-mgmt"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if data.get("status") == "success":
+            parts = [data.get("country", ""), data.get("regionName", ""), data.get("city", "")]
+            seen, loc = set(), []
+            for p in parts:
+                if p and p not in seen:
+                    seen.add(p); loc.append(p)
+            text = " ".join(loc) if loc else ip
+            isp = data.get("isp", "")
+            if isp:
+                text += f"（{isp}）"
+            result = text
+        else:
+            result = f"{ip}（无法定位）"
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+        result = f"{ip}（定位失败）"
+    _GEO_CACHE[ip] = result
+    return result
 
 # ============================================================
 # 5套主题
@@ -1423,6 +1505,264 @@ class LoginDialog(tk.Toplevel):
         self.destroy()
 
 
+class SwitchAccountDialog(tk.Toplevel):
+    """切换账号：列出本设备登录过的账号，点选即免密切换（token 仍有效时）。
+
+    - 点账号卡 → 切换；token 失效则仅提示「请重新登录」（不自动跳转）。
+    - 每个账号可「移除」出账号簿。
+    - 「+ 登录其他账号」打开登录框，登录成功即切换。
+    结果通过 self.result 返回：None=未切换；("switched", user)=已切到新账号。
+    """
+    def __init__(self, parent, api):
+        super().__init__(parent)
+        self.api = api
+        self.cfg = api.cfg
+        self.result = None
+
+        self.title("切换账号")
+        self.configure(bg=C["bg"])
+        self.geometry("420x480")
+        self.transient(parent)
+        self.grab_set()
+        self._ui()
+        self._center(parent)
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _center(self, p):
+        self.update_idletasks()
+        try:
+            x = p.winfo_x() + (p.winfo_width() - self.winfo_width()) // 2
+            y = p.winfo_y() + (p.winfo_height() - self.winfo_height()) // 2
+            self.geometry(f"+{max(x,0)}+{max(y,0)}")
+        except Exception:
+            pass
+
+    def _ui(self):
+        tk.Label(self, text="👥 切换账号", font=FONT_HEADER,
+                 fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(18, 4))
+        tk.Label(self, text="点选本设备登录过的账号，30 天内免密切换",
+                 font=FONT_SMALL, fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(0, 10))
+        self.body = tk.Frame(self, bg=C["bg"])
+        self.body.pack(fill=tk.BOTH, expand=True, padx=20)
+        self._render()
+        bf = tk.Frame(self, bg=C["bg"]); bf.pack(fill=tk.X, padx=20, pady=14)
+        RoundedBtn(bf, "＋ 登录其他账号", command=self._add_account,
+                   bg=C["primary"], width=180, height=38, canvas_bg=C["bg"]).pack(side=tk.LEFT)
+        RoundedBtn(bf, "关闭", command=self._close,
+                   bg=C["surface"], fg=C["text"], width=90, height=38, canvas_bg=C["bg"]).pack(side=tk.RIGHT)
+
+    def _render(self):
+        for w in self.body.winfo_children():
+            w.destroy()
+        accounts = self.cfg.accounts
+        if not accounts:
+            tk.Label(self.body, text="暂无已保存的账号\n点下方「登录其他账号」添加",
+                     font=FONT_BODY, justify=tk.CENTER,
+                     fg=C["text_secondary"], bg=C["bg"]).pack(pady=40)
+            return
+        cur_user = self.cfg.username
+        cur_srv = self.cfg.server_url
+        for a in accounts:
+            is_current = (a.get("username") == cur_user and a.get("server_url") == cur_srv)
+            card = tk.Frame(self.body, bg=C["card"],
+                            highlightbackground=(C["primary"] if is_current else C["border"]),
+                            highlightthickness=(2 if is_current else 1))
+            card.pack(fill=tk.X, pady=5)
+            inn = tk.Frame(card, bg=C["card"]); inn.pack(fill=tk.X, padx=14, pady=10)
+
+            left = tk.Frame(inn, bg=C["card"]); left.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            name_txt = f"👤 {a.get('username','?')}" + ("  （当前）" if is_current else "")
+            tk.Label(left, text=name_txt, font=("Microsoft YaHei UI", 12, "bold"),
+                     fg=(C["primary"] if is_current else C["text"]), bg=C["card"]).pack(anchor=tk.W)
+            tk.Label(left, text=a.get("server_url", ""), font=FONT_SMALL,
+                     fg=C["text_secondary"], bg=C["card"]).pack(anchor=tk.W, pady=(2, 0))
+
+            btns = tk.Frame(inn, bg=C["card"]); btns.pack(side=tk.RIGHT)
+            if not is_current:
+                RoundedBtn(btns, "切换", command=lambda acc=a: self._do_switch(acc),
+                           bg=C["success"], width=66, height=32, canvas_bg=C["card"]).pack(side=tk.LEFT, padx=(0, 6))
+            RoundedBtn(btns, "移除", command=lambda acc=a: self._do_remove(acc),
+                       bg=C["danger"], width=66, height=32, canvas_bg=C["card"]).pack(side=tk.LEFT)
+
+    def _do_switch(self, account):
+        try:
+            user = self.api.switch_to_account(account)
+            self.result = ("switched", user)
+            self.destroy()
+        except NetworkError:
+            messagebox.showerror("连接失败",
+                "连不上该账号的服务器，请检查网络后重试。", parent=self)
+        except ApiError:
+            # 按需求：仅提示，不自动跳登录框
+            messagebox.showwarning("登录已过期",
+                f"账号「{account.get('username','?')}」的登录已过期"
+                "（超 30 天或服务端重置）。\n请点「＋ 登录其他账号」用该账号重新登录。",
+                parent=self)
+
+    def _do_remove(self, account):
+        uname = account.get("username", "?")
+        if not messagebox.askyesno("移除账号",
+                f"确定把「{uname}」从本设备账号簿移除吗？\n"
+                "（不影响服务器上的账号，只是本机不再保存其登录）", parent=self):
+            return
+        self.cfg.remove_account(uname, account.get("server_url", ""))
+        self.cfg.save()
+        self._render()
+
+    def _add_account(self):
+        dlg = LoginDialog(self, self.api)
+        self.wait_window(dlg)
+        if dlg.success:
+            # 登录成功 = 已切到新账号
+            try:
+                user = self.api.verify_token()
+            except (NetworkError, ApiError):
+                user = {"username": self.cfg.username}
+            self.result = ("switched", user)
+            self.destroy()
+        else:
+            self._render()  # 可能新增/无变化，刷新一下
+
+    def _close(self):
+        self.destroy()
+
+
+class PendingChangeDialog(tk.Toplevel):
+    """待审改动弹窗：一次只显示一条手机端离线改动，由 owner 选择接收/拒绝。
+
+    显示：楼房+房间、提交位置（IP 转城市）、设备型号、提交时间、字段级变动列表。
+    多条待审时由 App 逐条弹出，本弹窗只负责单条，绝不互相覆盖。
+    """
+    def __init__(self, parent, api, change, total_pending=1):
+        super().__init__(parent)
+        self.api = api
+        self.change = change
+        self.total_pending = total_pending
+        self.resolved = None  # None=未处理(被关), True=接收, False=拒绝
+
+        self.title("待接收的手机端改动")
+        self.configure(bg=C["bg"])
+        self.geometry("460x560")
+        self.transient(parent)
+        self.grab_set()
+        # 不允许直接 X 关闭忽略，必须做出选择（关 = 稍后再问）
+        self.protocol("WM_DELETE_WINDOW", self._later)
+        self._ui()
+        self._center(parent)
+        self._kick_geo_lookup()
+
+    def _center(self, p):
+        self.update_idletasks()
+        try:
+            x = p.winfo_x() + (p.winfo_width() - self.winfo_width()) // 2
+            y = p.winfo_y() + (p.winfo_height() - self.winfo_height()) // 2
+            self.geometry(f"+{max(x,0)}+{max(y,0)}")
+        except Exception:
+            pass
+
+    def _fmt_time(self, iso):
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return iso or "未知"
+
+    def _ui(self):
+        c = self.change
+        tk.Label(self, text="💙 蕾姆发现一条来自手机端的改动", font=FONT_HEADER,
+                 fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(18, 6))
+
+        if self.total_pending > 1:
+            tk.Label(self, text=f"（共 {self.total_pending} 条待处理，将依次弹出）",
+                     font=FONT_SMALL, fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=20)
+
+        # 来源信息卡
+        meta = tk.Frame(self, bg=C["card"], highlightbackground=C["border"], highlightthickness=1)
+        meta.pack(fill=tk.X, padx=20, pady=(10, 8))
+        inn = tk.Frame(meta, bg=C["card"]); inn.pack(fill=tk.X, padx=14, pady=10)
+
+        bld = c.get("buildingName", "?")
+        room = c.get("roomNumber", "?")
+        self._meta_row(inn, "🏢 楼房 / 房间", f"{bld}  ·  {room}")
+        self.loc_var = tk.StringVar(value="📍 提交位置：正在定位…")
+        tk.Label(inn, textvariable=self.loc_var, font=FONT_BODY, anchor=tk.W,
+                 justify=tk.LEFT, wraplength=380, fg=C["text"], bg=C["card"]).pack(anchor=tk.W, pady=2)
+        model = c.get("deviceModel") or "未知设备"
+        self._meta_row(inn, "📱 设备型号", model)
+        self._meta_row(inn, "🕐 提交时间", self._fmt_time(c.get("createdAt", "")))
+
+        # 变动列表
+        tk.Label(self, text="变动内容：", font=("Microsoft YaHei UI", 11, "bold"),
+                 fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(4, 4))
+        box = tk.Frame(self, bg=C["surface"], highlightbackground=C["border"], highlightthickness=1)
+        box.pack(fill=tk.BOTH, expand=True, padx=20)
+        bi = tk.Frame(box, bg=C["surface"]); bi.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+        diff = c.get("diff", [])
+        if not diff:
+            tk.Label(bi, text="（无具体字段差异）", font=FONT_BODY,
+                     fg=C["text_secondary"], bg=C["surface"]).pack(anchor=tk.W)
+        for d in diff:
+            row = tk.Frame(bi, bg=C["surface"]); row.pack(fill=tk.X, anchor=tk.W, pady=3)
+            tk.Label(row, text=f"· {d.get('label','?')}：", font=FONT_BODY,
+                     fg=C["text"], bg=C["surface"]).pack(side=tk.LEFT)
+            tk.Label(row, text=f"{d.get('before','')}", font=FONT_BODY,
+                     fg=C["text_secondary"], bg=C["surface"]).pack(side=tk.LEFT)
+            tk.Label(row, text="  →  ", font=FONT_BODY,
+                     fg=C["text_dim"], bg=C["surface"]).pack(side=tk.LEFT)
+            tk.Label(row, text=f"{d.get('after','')}", font=("Microsoft YaHei UI", 11, "bold"),
+                     fg=C["primary"], bg=C["surface"]).pack(side=tk.LEFT)
+
+        # 按钮
+        bf = tk.Frame(self, bg=C["bg"]); bf.pack(fill=tk.X, padx=20, pady=14)
+        RoundedBtn(bf, "✅ 接收（纳入主库）", command=lambda: self._resolve(True),
+                   bg=C["success"], width=190, height=40, canvas_bg=C["bg"]).pack(side=tk.LEFT)
+        RoundedBtn(bf, "❌ 拒绝", command=lambda: self._resolve(False),
+                   bg=C["danger"], width=110, height=40, canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=(10, 0))
+        RoundedBtn(bf, "稍后", command=self._later,
+                   bg=C["surface"], fg=C["text"], width=80, height=40, canvas_bg=C["bg"]).pack(side=tk.RIGHT)
+
+    def _meta_row(self, parent, label, value):
+        tk.Label(parent, text=f"{label}：{value}", font=FONT_BODY, anchor=tk.W,
+                 justify=tk.LEFT, wraplength=380, fg=C["text"], bg=C["card"]).pack(anchor=tk.W, pady=2)
+
+    def _kick_geo_lookup(self):
+        """后台线程查 IP 归属地，查完用 after 安全回主线程更新 label。"""
+        ip = self.change.get("submitterIp") or ""
+        if not ip:
+            self.loc_var.set("📍 提交位置：未知（无 IP 信息）")
+            return
+
+        def worker():
+            loc = resolve_ip_location(ip)
+            try:
+                self.after(0, lambda: self._set_loc(ip, loc))
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_loc(self, ip, loc):
+        if self.winfo_exists():
+            self.loc_var.set(f"📍 提交位置：{loc}\n        （IP：{ip}）")
+
+    def _resolve(self, approve):
+        try:
+            self.api.resolve_pending_change(self.change["id"], approve)
+            self.resolved = approve
+            self.destroy()
+        except NetworkError:
+            messagebox.showerror("连接失败", "连不上服务器，请检查网络后重试。", parent=self)
+        except ApiError as e:
+            # 该条可能已被处理：当作完成，避免卡死队列
+            messagebox.showwarning("无法处理", e.message, parent=self)
+            self.resolved = None
+            self.destroy()
+
+    def _later(self):
+        """稍后再说：关掉本条，下次轮询会再弹出。"""
+        self.resolved = None
+        self.destroy()
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1457,6 +1797,13 @@ class App(tk.Tk):
 
         self._show_home()
         self.protocol("WM_DELETE_WINDOW", self._close)
+
+        # 启动「待审改动」后台轮询：手机端离线重连的改动会进待审表，
+        # 这里定时拉取并逐条弹窗，由你选择接收/拒绝。
+        self._pending_dialog_open = False
+        self._pending_poll_on = False
+        self._pending_after_id = None
+        self._start_pending_poll()
 
     def _ensure_login(self):
         """确保已登录。返回 True=已登录，False=用户取消。"""
@@ -1642,12 +1989,22 @@ class App(tk.Tk):
         menu.add_separator()
         menu.add_command(label="🔄 刷新数据", command=self._refresh_data)
         menu.add_command(label="🔧 编辑申请人权限", command=self._edit_grantees_dialog)
-        menu.add_command(label="🔁 切换账号", command=lambda: self._relogin(switch=True))
+        menu.add_command(label="🔁 切换账号", command=self._switch_account)
         menu.add_command(label="🚪 退出登录", command=lambda: self._relogin(switch=False))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _switch_account(self):
+        """打开账号选择框：免密切换本设备登录过的账号（不再是退出重登）。"""
+        dlg = SwitchAccountDialog(self, self.api)
+        self.wait_window(dlg)
+        if dlg.result and dlg.result[0] == "switched":
+            # 切到新账号：重建数据并回主页
+            self.dm = DataStore(self.api)
+            self._apply_theme(self.dm.theme)
+            self._show_home()
 
     def _refresh_data(self):
         """重新拉取服务器数据并重绘当前界面（手机端改了数据后，电脑端无需重登）。"""
@@ -1744,10 +2101,9 @@ class App(tk.Tk):
         finally:
             menu.grab_release()
 
-    def _relogin(self, switch):
-        """退出登录 / 切换账号：清 token 后重新弹登录框。"""
-        action = "切换账号" if switch else "退出登录"
-        if not messagebox.askyesno(action, f"确定要{action}吗？", parent=self):
+    def _relogin(self, switch=False):
+        """退出登录：清当前会话 token 后弹登录框（账号仍保留在账号簿，可免密切回）。"""
+        if not messagebox.askyesno("退出登录", "确定要退出当前账号吗？", parent=self):
             return
         self.api.logout()
         dlg = LoginDialog(self, self.api)
@@ -2047,7 +2403,84 @@ class App(tk.Tk):
             self._show_room_grid(sb)
         TransferDialog(self, blds, building["id"], room["id"], cb)
 
+    # ====== 待审改动：后台轮询 + 逐条弹窗 ======
+    PENDING_POLL_MS = 8000  # 轮询间隔（毫秒）
+
+    def _start_pending_poll(self):
+        """启动轮询（幂等：重复调用不会叠加多个定时器）。"""
+        if self._pending_poll_on:
+            return
+        self._pending_poll_on = True
+        self._schedule_pending_poll()
+
+    def _schedule_pending_poll(self):
+        if not self._pending_poll_on:
+            return
+        self._pending_after_id = self.after(self.PENDING_POLL_MS, self._poll_pending)
+
+    def _poll_pending(self):
+        """拉取待审改动；有则逐条弹窗。一次只弹一条，处理完才弹下一条。"""
+        # 弹窗开着 / 当前离线时，本轮跳过，下轮再来
+        if self._pending_dialog_open or getattr(self.dm, "offline", False):
+            self._schedule_pending_poll()
+            return
+        try:
+            changes = self.api.list_pending_changes()
+        except (NetworkError, ApiError):
+            # 拉取失败（断网/鉴权）：静默跳过，下轮再试
+            self._schedule_pending_poll()
+            return
+        except Exception:
+            self._schedule_pending_poll()
+            return
+
+        if changes:
+            self._show_next_pending(changes)
+        else:
+            self._schedule_pending_poll()
+
+    def _show_next_pending(self, changes):
+        """弹出队列中第一条；用户处理完后接着弹下一条（重新拉取以反映最新状态）。"""
+        if not changes:
+            self._schedule_pending_poll()
+            return
+        self._pending_dialog_open = True
+        dlg = PendingChangeDialog(self, self.api, changes[0], total_pending=len(changes))
+        self.wait_window(dlg)
+        self._pending_dialog_open = False
+
+        if dlg.resolved is True:
+            # 接收了改动：刷新界面让新数据立即可见
+            try:
+                self.dm.load()
+                if self.nav:
+                    self._clear(); self.nav[-1]()
+                else:
+                    self._show_home()
+            except Exception:
+                pass
+
+        if dlg.resolved is None:
+            # 用户点了「稍后」：停止本轮连续弹窗，等下次轮询再问
+            self._schedule_pending_poll()
+            return
+
+        # 处理了一条（接收或拒绝）：重新拉取剩余的，继续逐条弹
+        try:
+            remaining = self.api.list_pending_changes()
+        except Exception:
+            remaining = []
+        if remaining:
+            # 用 after 让界面喘口气，再弹下一条
+            self.after(300, lambda: self._show_next_pending(remaining))
+        else:
+            self._schedule_pending_poll()
+
     def _close(self):
+        self._pending_poll_on = False
+        if self._pending_after_id:
+            try: self.after_cancel(self._pending_after_id)
+            except Exception: pass
         self.dm.save(); self.destroy()
 
 

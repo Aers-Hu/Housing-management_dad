@@ -40,6 +40,9 @@ class ClientConfig:
         self.token = ""
         self.username = ""
         self.theme = ""  # 主题为客户端本地偏好，服务器不存
+        # 本地账号簿：本设备登录过的账号，用于免密切换。
+        # 每项 {"username", "token", "server_url"}。token 为 30 天有效的自包含签名。
+        self.accounts = []
         self._load()
 
     def _load(self):
@@ -51,6 +54,9 @@ class ClientConfig:
                 self.token = d.get("token", "")
                 self.username = d.get("username", "")
                 self.theme = d.get("theme", "")
+                accs = d.get("accounts", [])
+                if isinstance(accs, list):
+                    self.accounts = [a for a in accs if isinstance(a, dict) and a.get("username")]
             except Exception:
                 pass
 
@@ -62,9 +68,28 @@ class ClientConfig:
                     "token": self.token,
                     "username": self.username,
                     "theme": self.theme,
+                    "accounts": self.accounts,
                 }, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+    # ---- 本地账号簿 ----
+    def upsert_account(self, username, token, server_url):
+        """登录/注册成功后写入账号簿（同名+同服务器视为同一账号，更新其 token）。"""
+        if not username:
+            return
+        for a in self.accounts:
+            if a.get("username") == username and a.get("server_url") == server_url:
+                a["token"] = token
+                return
+        self.accounts.append({"username": username, "token": token, "server_url": server_url})
+
+    def remove_account(self, username, server_url):
+        """从账号簿移除某账号。"""
+        self.accounts = [
+            a for a in self.accounts
+            if not (a.get("username") == username and a.get("server_url") == server_url)
+        ]
 
     @staticmethod
     def normalize_url(raw):
@@ -113,6 +138,7 @@ class ApiClient:
                              {"username": username, "password": password}, auth=False)
         self.cfg.token = data["token"]
         self.cfg.username = data["user"]["username"]
+        self.cfg.upsert_account(self.cfg.username, self.cfg.token, self.cfg.server_url)
         self.cfg.save()
         return data["user"]
 
@@ -121,6 +147,7 @@ class ApiClient:
                              {"username": username, "password": password}, auth=False)
         self.cfg.token = data["token"]
         self.cfg.username = data["user"]["username"]
+        self.cfg.upsert_account(self.cfg.username, self.cfg.token, self.cfg.server_url)
         self.cfg.save()
         return data["user"]
 
@@ -130,9 +157,30 @@ class ApiClient:
         return data["user"]
 
     def logout(self):
+        # 仅结束当前会话；账号仍保留在账号簿，30 天内可免密切回
         self.cfg.token = ""
         self.cfg.username = ""
         self.cfg.save()
+
+    def switch_to_account(self, account):
+        """切换到账号簿中的某账号：设为当前激活态，并校验其 token 是否仍有效。
+        返回 user（有效）；token 失效抛 ApiError；连不上抛 NetworkError。
+        校验失败时不污染当前激活态（先备份后恢复）。"""
+        prev = (self.cfg.server_url, self.cfg.token, self.cfg.username)
+        self.cfg.server_url = account.get("server_url") or self.cfg.server_url
+        self.cfg.token = account.get("token", "")
+        self.cfg.username = account.get("username", "")
+        try:
+            user = self.verify_token()
+        except (ApiError, NetworkError):
+            # 恢复原激活态，避免把界面带到一个无效会话
+            self.cfg.server_url, self.cfg.token, self.cfg.username = prev
+            raise
+        # 校验通过：刷新该账号 token（可能服务端续签）并持久化
+        self.cfg.username = user["username"]
+        self.cfg.upsert_account(self.cfg.username, self.cfg.token, self.cfg.server_url)
+        self.cfg.save()
+        return user
 
     # ---- 楼房/房间（返回服务器原始结构）----
     def list_buildings(self):
@@ -184,6 +232,17 @@ class ApiClient:
     def revoke_grantee(self, grantee_id):
         """撤销某被授权人。"""
         self._request("DELETE", f"/grantees/{grantee_id}")
+
+    # ---- 待审改动（手机端离线重放，待 owner 逐条批准）----
+    def list_pending_changes(self):
+        """列出我名下待审的全部手机端改动（按时间正序）。"""
+        return self._request("GET", "/pending-changes")["pendingChanges"]
+
+    def resolve_pending_change(self, change_id, approve):
+        """批准/拒绝某条待审改动。approve=True 套用到主库，False 丢弃。"""
+        action = "approve" if approve else "reject"
+        return self._request("POST", f"/pending-changes/{change_id}/resolve",
+                             {"action": action})
 
 
 # ============================================================

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Building, Room, generateId, generateBuildingRooms } from './roomTypes';
 import { apiRequest, NetworkError } from './api';
-import { enqueueRoomUpdate } from './sync';
+import { enqueueRoomUpdate, flushOutbox } from './sync';
 import { isOnline, scheduleProbe } from './netstatus';
 
 // ============================================================
@@ -355,6 +355,30 @@ async function transferTenant(
   return { fromRoom: updatedFromRoom, toRoom: updatedToRoom };
 }
 
+// ============================================================
+// 离线重放后的对账（以主库为准）
+//
+// 重连后 flushOutbox 把离线改动重放上去，但服务端不直接落库，而是进「待审表」
+// 等服务器端确认。因此这些改动在主库尚未生效。这里在重放后立刻从主库重新拉取
+// 受影响楼房的房间，覆盖本地缓存里的「乐观值」——确保：
+//   · 审核期间手机显示主库旧值（与主库一致）
+//   · 审核被拒后手机不残留「幽灵数据」
+//   · 审核通过后下次刷新自然显示新值
+// 返回「已提交待确认」的条数，供 UI 提示。
+// ============================================================
+async function reconcileOfflineReplays(): Promise<{ submittedForReview: number }> {
+  const { submittedForReview, affectedBuildingIds } = await flushOutbox();
+  for (const bid of affectedBuildingIds) {
+    try {
+      const data = await apiRequest<{ rooms: Room[] }>(`/buildings/${bid}`);
+      await cacheSetRooms(bid, data.rooms); // 以主库为准覆盖乐观值
+    } catch {
+      // 拉取失败就保持现状，下次 loadRooms 进入该楼时会再纠正
+    }
+  }
+  return { submittedForReview };
+}
+
 export const StorageService = {
   // Buildings
   loadBuildings,
@@ -370,4 +394,6 @@ export const StorageService = {
   addRoom,
   deleteRoom,
   transferTenant,
+  // 同步对账
+  reconcileOfflineReplays,
 };
