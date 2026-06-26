@@ -134,11 +134,12 @@ export function initSchema(): void {
 }
 
 // ============================================================
-// 迁移：为 pending_changes 增补「双人决策 + 落库状态 + 原始快照」列
+// 迁移：为 pending_changes 增补「双人决策 + 落库状态 + 原始快照 + 裁决时间」列
 //   owner_decision : 楼主决定  NULL=未决 / 'approve' / 'reject'
 //   admin_decision : 管理员决定（优先级最高，覆盖楼主）同上取值
 //   applied        : 当前提议是否已写入主库  0/1（方案 B：先到先生效）
 //   original       : JSON，改动前的房间快照（管理员翻盘回滚时按字段还原用）
+//   resolved_at    : 管理员最终裁决时间（ISO），用于历史记录排序与 50 条上限清理
 // 用 PRAGMA 检测列是否已存在，幂等：已迁移过则跳过，老库平滑升级不丢数据。
 // ============================================================
 function migratePendingChanges(): void {
@@ -154,6 +155,7 @@ function migratePendingChanges(): void {
   addCol('admin_decision', 'admin_decision TEXT');
   addCol('applied', 'applied INTEGER NOT NULL DEFAULT 0');
   addCol('original', 'original TEXT');
+  addCol('resolved_at', 'resolved_at TEXT');
 }
 
 export { DB_PATH };

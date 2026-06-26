@@ -271,6 +271,18 @@ class ApiClient:
         return self._request("POST", f"/pending-changes/{change_id}/resolve",
                              {"action": action})
 
+    def list_pending_history(self):
+        """管理员视角：最近 50 条已裁决的审批历史（按时间倒序）。"""
+        return self._request("GET", "/pending-changes/history")["history"]
+
+    def delete_pending_history(self, change_id):
+        """管理员：删除单条审批历史。"""
+        return self._request("DELETE", f"/pending-changes/history/{change_id}")
+
+    def clear_pending_history(self):
+        """管理员：一键清空全部审批历史。"""
+        return self._request("DELETE", "/pending-changes/history")
+
 
 # ============================================================
 # 数据模型转换：服务器扁平模型 <-> Python 嵌套模型

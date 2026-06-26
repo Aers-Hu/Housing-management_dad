@@ -99,6 +99,7 @@ export interface PendingChange {
   adminDecision?: PendingDecision;  // 管理员决定（优先级最高，覆盖楼主）
   applied?: boolean;                // 当前提议是否已写入主库
   original?: Room;                  // 改动前的房间快照（管理员翻盘回滚用）
+  resolvedAt?: string;              // 管理员最终裁决时间（ISO），用于历史记录
 }
 
 // 待审决定：undefined/未设=未决

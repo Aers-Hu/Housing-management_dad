@@ -363,9 +363,9 @@ router.post('/pending-changes/:id/resolve', (req, res) => {
   }
 
   if (admin) {
-    // 管理员裁决 = 最终：按「管理员决定」调和主库，然后删除记录
+    // 管理员裁决 = 最终：按「管理员决定」调和主库，标记已裁决（保留为历史）
     const applied = reconcile(pending, pending.ownerDecision, action);
-    PendingChanges.delete(pending.id);
+    PendingChanges.markResolved(pending.id, action);
     return res.json({ ok: true, status: action === 'approve' ? 'approved' : 'rejected', applied, byAdmin: true });
   }
 
@@ -373,6 +373,37 @@ router.post('/pending-changes/:id/resolve', (req, res) => {
   const applied = reconcile(pending, action, undefined);
   PendingChanges.setOwnerDecision(pending.id, action);
   return res.json({ ok: true, status: action === 'approve' ? 'approved' : 'rejected', applied, pendingAdmin: true });
+});
+
+// 管理员视角：最近 50 条审批历史
+router.get('/pending-changes/history', (req, res) => {
+  const userId = getUserId(req);
+  if (!isAdminUser(userId)) {
+    return res.status(403).json({ error: '仅管理员可查看审批历史' });
+  }
+  res.json({ history: PendingChanges.listHistory() });
+});
+
+// 管理员：删除单条审批历史
+router.delete('/pending-changes/history/:id', (req, res) => {
+  const userId = getUserId(req);
+  if (!isAdminUser(userId)) {
+    return res.status(403).json({ error: '仅管理员可操作' });
+  }
+  const record = PendingChanges.findById(req.params.id);
+  if (!record) return res.status(404).json({ error: '记录不存在' });
+  PendingChanges.delete(req.params.id);
+  res.json({ ok: true });
+});
+
+// 管理员：一键清空全部审批历史
+router.delete('/pending-changes/history', (req, res) => {
+  const userId = getUserId(req);
+  if (!isAdminUser(userId)) {
+    return res.status(403).json({ error: '仅管理员可操作' });
+  }
+  PendingChanges.clearHistory();
+  res.json({ ok: true });
 });
 
 export default router;

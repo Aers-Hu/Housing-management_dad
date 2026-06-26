@@ -315,13 +315,16 @@ export const AccountGrants = {
 //
 // 方案 B（先到先生效，管理员可事后翻盘）下的字段语义：
 //   owner_decision : 楼主决定（先到先生效后即记录，记录仍保留以便管理员翻盘）
-//   admin_decision : 管理员决定（优先级最高）。管理员一裁决即为最终，记录随后删除。
+//   admin_decision : 管理员决定（优先级最高）。管理员一裁决即为最终，
+//                    记录保留为历史（最近 50 条）而非删除。
 //   applied        : 当前提议是否已落主库（用于判断管理员翻盘时要写入还是回滚）
 //   original       : 改动前的房间快照（管理员翻盘回滚时按字段精准还原）
+//   resolved_at    : 管理员最终裁决时间（ISO），用于历史排序 + 超 50 条清理
 //
 // 队列可见性：
 //   楼主  → 只看自己名下「楼主尚未决定」的（owner_decision IS NULL）
 //   管理员 → 看「尚未最终裁决」的全部楼主待审（admin_decision IS NULL，即全部存活记录）
+//   历史  → 管理员已裁决的（admin_decision NOT NULL），最近 50 条
 // ============================================================
 export const PendingChanges = {
   create(args: {
@@ -407,6 +410,46 @@ export const PendingChanges = {
 
   delete(id: string): void {
     db.prepare('DELETE FROM pending_changes WHERE id = ?').run(id);
+  },
+
+  // 管理员最终裁决：标记 admin_decision + resolved_at，然后清理超出 50 条的历史
+  markResolved(id: string, decision: 'approve' | 'reject'): void {
+    const now = new Date().toISOString();
+    db.prepare('UPDATE pending_changes SET admin_decision = ?, resolved_at = ? WHERE id = ?')
+      .run(decision, now, id);
+    this._pruneHistory();
+  },
+
+  // 管理员视角：最近 50 条已裁决历史（按裁决时间倒序），附楼房名与房间号
+  listHistory(): (PendingChange & { buildingName: string; roomNumber: string })[] {
+    return this._listWhere(
+      `WHERE p.admin_decision IS NOT NULL AND p.resolved_at IS NOT NULL
+       ORDER BY p.resolved_at DESC LIMIT 50`,
+      []
+    );
+  },
+
+  // 清理：仅保留最近 50 条已裁决记录，删除更早的
+  _pruneHistory(): void {
+    const cutoff = db.prepare(
+      `SELECT resolved_at FROM pending_changes
+       WHERE admin_decision IS NOT NULL AND resolved_at IS NOT NULL
+       ORDER BY resolved_at DESC LIMIT 1 OFFSET 49`
+    ).get() as any;
+    if (cutoff && cutoff.resolved_at) {
+      db.prepare(
+        `DELETE FROM pending_changes
+         WHERE admin_decision IS NOT NULL AND resolved_at IS NOT NULL
+           AND resolved_at < ?`
+      ).run(cutoff.resolved_at);
+    }
+  },
+
+  // 一键清空全部已裁决历史
+  clearHistory(): void {
+    db.prepare(
+      `DELETE FROM pending_changes WHERE admin_decision IS NOT NULL`
+    ).run();
   },
 };
 

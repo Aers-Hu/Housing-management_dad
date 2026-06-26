@@ -84,5 +84,6 @@ export function rowToPendingChange(r: any): PendingChange {
     adminDecision: r.admin_decision ?? undefined,
     applied: !!r.applied,
     original,
+    resolvedAt: r.resolved_at ?? undefined,
   };
 }

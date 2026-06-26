@@ -1786,6 +1786,133 @@ class PendingChangeDialog(tk.Toplevel):
         self.destroy()
 
 
+class HistoryDetailDialog(tk.Toplevel):
+    """审批历史详情弹窗（只读）：显示已裁决的审批窗完整信息。
+
+    复用 PendingChangeDialog 的显示模式，但不含操作按钮，仅「关闭」。
+    """
+    def __init__(self, parent, change):
+        super().__init__(parent)
+        self.change = change
+
+        self.title("📜 审批历史详情")
+        self.configure(bg=C["bg"])
+        self.geometry("460x560")
+        self.transient(parent)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self._ui()
+        self._center(parent)
+        self._kick_geo_lookup()
+
+    def _center(self, p):
+        self.update_idletasks()
+        try:
+            x = p.winfo_x() + (p.winfo_width() - self.winfo_width()) // 2
+            y = p.winfo_y() + (p.winfo_height() - self.winfo_height()) // 2
+            self.geometry(f"+{max(x,0)}+{max(y,0)}")
+        except Exception:
+            pass
+
+    def _fmt_time(self, iso):
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return iso or "未知"
+
+    def _ui(self):
+        c = self.change
+        # 决策结果标识
+        decision = c.get("adminDecision")
+        if decision == "approve":
+            tag_text = "✅ 已准许写入"
+            tag_color = C["success"]
+        elif decision == "reject":
+            tag_text = "⛔ 已拒绝写入"
+            tag_color = C["danger"]
+        else:
+            tag_text = "❓ 未知决策"
+            tag_color = C["text_secondary"]
+
+        tk.Label(self, text=tag_text, font=FONT_HEADER,
+                 fg=tag_color, bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(18, 6))
+
+        # 来源信息卡
+        meta = tk.Frame(self, bg=C["card"], highlightbackground=C["border"], highlightthickness=1)
+        meta.pack(fill=tk.X, padx=20, pady=(10, 8))
+        inn = tk.Frame(meta, bg=C["card"]); inn.pack(fill=tk.X, padx=14, pady=10)
+
+        bld = c.get("buildingName", "?")
+        room = c.get("roomNumber", "?")
+        self._meta_row(inn, "🏢 楼房 / 房间", f"{bld}  ·  {room}")
+        self.loc_var = tk.StringVar(value="📍 提交位置：正在定位…")
+        tk.Label(inn, textvariable=self.loc_var, font=FONT_BODY, anchor=tk.W,
+                 justify=tk.LEFT, wraplength=380, fg=C["text"], bg=C["card"]).pack(anchor=tk.W, pady=2)
+        model = c.get("deviceModel") or "未知设备"
+        self._meta_row(inn, "📱 设备型号", model)
+        self._meta_row(inn, "🕐 提交时间", self._fmt_time(c.get("createdAt", "")))
+        self._meta_row(inn, "🛡️ 裁决时间", self._fmt_time(c.get("resolvedAt", "")))
+
+        # 楼主决定
+        od = c.get("ownerDecision")
+        if od == "approve":
+            od_text = "楼主已选「接收」" + ("（已写入主库）" if c.get("applied") else "")
+        elif od == "reject":
+            od_text = "楼主已选「拒绝」"
+        else:
+            od_text = "楼主尚未决定"
+        self._meta_row(inn, "👤 楼主暂定", od_text)
+
+        # 变动列表
+        tk.Label(self, text="变动内容：", font=("Microsoft YaHei UI", 11, "bold"),
+                 fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(4, 4))
+        box = tk.Frame(self, bg=C["surface"], highlightbackground=C["border"], highlightthickness=1)
+        box.pack(fill=tk.BOTH, expand=True, padx=20)
+        bi = tk.Frame(box, bg=C["surface"]); bi.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+        diff = c.get("diff", [])
+        if not diff:
+            tk.Label(bi, text="（无具体字段差异）", font=FONT_BODY,
+                     fg=C["text_secondary"], bg=C["surface"]).pack(anchor=tk.W)
+        for d in diff:
+            row = tk.Frame(bi, bg=C["surface"]); row.pack(fill=tk.X, anchor=tk.W, pady=3)
+            tk.Label(row, text=f"· {d.get('label','?')}：", font=FONT_BODY,
+                     fg=C["text"], bg=C["surface"]).pack(side=tk.LEFT)
+            tk.Label(row, text=f"{d.get('before','')}", font=FONT_BODY,
+                     fg=C["text_secondary"], bg=C["surface"]).pack(side=tk.LEFT)
+            tk.Label(row, text="  →  ", font=FONT_BODY,
+                     fg=C["text_dim"], bg=C["surface"]).pack(side=tk.LEFT)
+            tk.Label(row, text=f"{d.get('after','')}", font=("Microsoft YaHei UI", 11, "bold"),
+                     fg=C["primary"], bg=C["surface"]).pack(side=tk.LEFT)
+
+        # 关闭按钮
+        bf = tk.Frame(self, bg=C["bg"]); bf.pack(fill=tk.X, padx=20, pady=14)
+        RoundedBtn(bf, "关闭", command=self.destroy,
+                   bg=C["surface"], fg=C["text"], width=100, height=40,
+                   canvas_bg=C["bg"]).pack(side=tk.RIGHT)
+
+    def _meta_row(self, parent, label, value):
+        tk.Label(parent, text=f"{label}：{value}", font=FONT_BODY, anchor=tk.W,
+                 justify=tk.LEFT, wraplength=380, fg=C["text"], bg=C["card"]).pack(anchor=tk.W, pady=2)
+
+    def _kick_geo_lookup(self):
+        ip = self.change.get("submitterIp") or ""
+        if not ip:
+            self.loc_var.set("📍 提交位置：未知（无 IP 信息）")
+            return
+        def worker():
+            loc = resolve_ip_location(ip)
+            try:
+                self.after(0, lambda: self._set_loc(ip, loc))
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_loc(self, ip, loc):
+        if self.winfo_exists():
+            self.loc_var.set(f"📍 提交位置：{loc}\n        （IP：{ip}）")
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1975,28 +2102,57 @@ class App(tk.Tk):
         # 右键菜单：刷新数据（手机端更新后无需退出重登）
         ma.bind("<Button-3>", self._show_context_menu)
         hd = tk.Frame(ma, bg=C["bg"]); hd.pack(fill=tk.X, padx=30, pady=(26,10))
-        tk.Label(hd, text="我的楼房", font=FONT_TITLE,
-                 fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT)
-        search = make_entry(hd, width=22)
-        search.pack(side=tk.RIGHT, ipady=6)
-        search.insert(0,"🔍 搜索...")
-        search.bind("<FocusIn>", lambda e: search.delete(0,tk.END) if search.get()=="🔍 搜索..." else None)
-        search.bind("<FocusOut>", lambda e: search.insert(0,"🔍 搜索...") if not search.get() else None)
 
-        cv = tk.Canvas(ma, bg=C["bg"], highlightthickness=0)
-        self.home_cv = cv  # 保存引用
-        scr = tk.Scrollbar(ma, orient=tk.VERTICAL, command=cv.yview)
-        self.card_frm = tk.Frame(cv, bg=C["bg"])
-        self.card_frm.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
-        cw = cv.create_window((0,0), window=self.card_frm, anchor=tk.NW)
-        cv.configure(yscrollcommand=scr.set)
-        cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
-        cv.bind("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta/120), "units"))
-        cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scr.pack(side=tk.RIGHT, fill=tk.Y)
-        search.bind("<KeyRelease>", lambda e: self._refresh_cards(search.get()))
-        self._refresh_cards("")
-        bind_scroll(self.card_frm, cv)
+        is_admin = (self.cfg.username == ADMIN_USERNAME)
+        if is_admin:
+            # ---- 管理员：主内容区展示审批历史 ----
+            tk.Label(hd, text="📜 审批历史", font=FONT_TITLE,
+                     fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT)
+            tk.Label(hd, text="最近 50 条已裁决记录",
+                     font=FONT_SMALL, fg=C["text_secondary"], bg=C["bg"]).pack(side=tk.LEFT, padx=(10, 0))
+
+            # 一键清空按钮
+            self.history_clear_btn = RoundedBtn(hd, "🗑 清空历史", command=self._clear_history,
+                         bg=C["danger"], width=110, height=34, canvas_bg=C["bg"])
+            self.history_clear_btn.pack(side=tk.RIGHT)
+
+            cv = tk.Canvas(ma, bg=C["bg"], highlightthickness=0)
+            self.home_cv = cv
+            scr = tk.Scrollbar(ma, orient=tk.VERTICAL, command=cv.yview)
+            self.card_frm = tk.Frame(cv, bg=C["bg"])
+            self.card_frm.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+            cw = cv.create_window((0,0), window=self.card_frm, anchor=tk.NW)
+            cv.configure(yscrollcommand=scr.set)
+            cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
+            cv.bind("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta/120), "units"))
+            cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scr.pack(side=tk.RIGHT, fill=tk.Y)
+            self._refresh_history(cv)
+            bind_scroll(self.card_frm, cv)
+        else:
+            # ---- 普通用户：我的楼房 ----
+            tk.Label(hd, text="我的楼房", font=FONT_TITLE,
+                     fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT)
+            search = make_entry(hd, width=22)
+            search.pack(side=tk.RIGHT, ipady=6)
+            search.insert(0,"🔍 搜索...")
+            search.bind("<FocusIn>", lambda e: search.delete(0,tk.END) if search.get()=="🔍 搜索..." else None)
+            search.bind("<FocusOut>", lambda e: search.insert(0,"🔍 搜索...") if not search.get() else None)
+
+            cv = tk.Canvas(ma, bg=C["bg"], highlightthickness=0)
+            self.home_cv = cv  # 保存引用
+            scr = tk.Scrollbar(ma, orient=tk.VERTICAL, command=cv.yview)
+            self.card_frm = tk.Frame(cv, bg=C["bg"])
+            self.card_frm.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+            cw = cv.create_window((0,0), window=self.card_frm, anchor=tk.NW)
+            cv.configure(yscrollcommand=scr.set)
+            cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
+            cv.bind("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta/120), "units"))
+            cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scr.pack(side=tk.RIGHT, fill=tk.Y)
+            search.bind("<KeyRelease>", lambda e: self._refresh_cards(search.get()))
+            self._refresh_cards("")
+            bind_scroll(self.card_frm, cv)
 
     def _switch_theme(self, tn):
         self._apply_theme(tn); self._show_home()
@@ -2163,6 +2319,137 @@ class App(tk.Tk):
             self._bld_card(row, b).pack(side=tk.LEFT, fill=tk.X, expand=True,
                                         padx=(0,10) if i%cols==0 else (10,0))
         bind_scroll(self.card_frm, self.home_cv)
+
+    # ====== 管理员审批历史 ======
+    def _refresh_history(self, cv):
+        """加载审批历史列表到主内容区（管理员视角，最近 50 条）。"""
+        for w in self.card_frm.winfo_children(): w.destroy()
+        try:
+            history = self.api.list_pending_history() if not self.dm.offline else []
+        except Exception:
+            history = []
+
+        if not history:
+            emp = tk.Frame(self.card_frm, bg=C["bg"]); emp.pack(fill=tk.BOTH, expand=True, pady=100)
+            tk.Label(emp, text="📭", font=("Segoe UI Emoji",48), bg=C["bg"]).pack()
+            tk.Label(emp, text="暂无审批历史", font=FONT_BODY,
+                     fg=C["text_secondary"], bg=C["bg"]).pack(pady=6)
+            tk.Label(emp, text="管理员裁决后将自动记录在此",
+                     font=FONT_SMALL, fg=C["text_dim"], bg=C["bg"]).pack()
+            return
+
+        self.home_cv = cv
+        for h in history:
+            self._history_card(h).pack(fill=tk.X, padx=26, pady=6)
+        bind_scroll(self.card_frm, cv)
+
+    def _history_card(self, h):
+        """渲染单条审批历史卡片，点击查看详情。"""
+        decision = h.get("adminDecision")
+        if decision == "approve":
+            badge = "✅ 准许"
+            badge_bg = C["success"]
+        elif decision == "reject":
+            badge = "⛔ 拒绝"
+            badge_bg = C["danger"]
+        else:
+            badge = "❓ 未知"
+            badge_bg = C["text_secondary"]
+
+        card = tk.Frame(self.card_frm, bg=C["card"],
+                        highlightbackground=C["border"], highlightthickness=1,
+                        cursor="hand2")
+        inn = tk.Frame(card, bg=C["card"]); inn.pack(fill=tk.X, padx=20, pady=14)
+
+        # 左侧信息
+        lf = tk.Frame(inn, bg=C["card"]); lf.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        bld_name = h.get("buildingName", "?")
+        room_num = h.get("roomNumber", "?")
+        tk.Label(lf, text=f"🏢 {bld_name}  ·  🚪 {room_num}",
+                 font=FONT_HEADER, fg=C["text"], bg=C["card"],
+                 anchor=tk.W).pack(anchor=tk.W)
+
+        submit_time = h.get("createdAt", "")
+        try:
+            dt = datetime.fromisoformat(submit_time.replace("Z", "+00:00"))
+            submit_time = dt.astimezone().strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+        resolve_time = h.get("resolvedAt", "")
+        try:
+            dt = datetime.fromisoformat(resolve_time.replace("Z", "+00:00"))
+            resolve_time = dt.astimezone().strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+        tk.Label(lf, text=f"📤 提交：{submit_time}    🛡️ 裁决：{resolve_time}",
+                 font=FONT_SMALL, fg=C["text_secondary"], bg=C["card"],
+                 anchor=tk.W).pack(anchor=tk.W, pady=(4, 0))
+
+        # 右侧决策徽章
+        badge_frame = tk.Frame(inn, bg=badge_bg, width=72, height=32)
+        badge_frame.pack(side=tk.RIGHT, padx=(12, 0))
+        badge_frame.pack_propagate(False)
+        tk.Label(badge_frame, text=badge, font=FONT_SMALL,
+                 fg=C["white"], bg=badge_bg).place(relx=.5, rely=.5, anchor=tk.CENTER)
+
+        # 左键点击查看详情
+        for w in (card, inn, lf) + tuple(lf.winfo_children()):
+            w.bind("<Button-1>", lambda e, h=h: self._show_history_detail(h))
+        # 右键菜单：删除此记录
+        for w in (card, inn, lf) + tuple(lf.winfo_children()) + tuple(badge_frame.winfo_children()):
+            w.bind("<Button-3>", lambda e, h=h: self._on_history_right_click(e, h))
+        return card
+
+    def _show_history_detail(self, h):
+        """点击历史卡片：弹出详情弹窗。"""
+        HistoryDetailDialog(self, h)
+
+    def _on_history_right_click(self, event, h):
+        """右键菜单：删除此审批记录。"""
+        menu = tk.Menu(self, tearoff=0, font=FONT_BODY,
+                       bg=C["card"], fg=C["text"],
+                       activebackground=C["danger"], activeforeground=C["white"])
+        menu.add_command(label="🗑 删除此记录",
+                         command=lambda: self._delete_history_record(h))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _delete_history_record(self, h):
+        """删除单条审批历史记录。"""
+        if not messagebox.askyesno("删除确认",
+                                   f"确定要删除这条审批记录吗？\n\n"
+                                   f"🏢 {h.get('buildingName','?')}  ·  🚪 {h.get('roomNumber','?')}",
+                                   parent=self):
+            return
+        try:
+            self.api.delete_pending_history(h["id"])
+        except NetworkError:
+            messagebox.showerror("连接失败", "连不上服务器，请检查网络。", parent=self)
+            return
+        except ApiError as e:
+            messagebox.showerror("删除失败", e.message, parent=self)
+            return
+        # 刷新历史列表
+        self._refresh_history(self.home_cv)
+
+    def _clear_history(self):
+        """一键清空全部审批历史。"""
+        if not messagebox.askyesno("清空确认",
+                                   "确定要清空全部审批历史吗？\n\n此操作不可撤销！",
+                                   parent=self):
+            return
+        try:
+            self.api.clear_pending_history()
+        except NetworkError:
+            messagebox.showerror("连接失败", "连不上服务器，请检查网络。", parent=self)
+            return
+        except ApiError as e:
+            messagebox.showerror("清空失败", e.message, parent=self)
+            return
+        messagebox.showinfo("已清空", "全部审批历史已清空。", parent=self)
+        self._refresh_history(self.home_cv)
 
     def _bld_card(self, parent, b):
         perm = b.get("_permission", "owner")
