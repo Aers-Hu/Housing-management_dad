@@ -94,7 +94,15 @@ export interface PendingChange {
   submitterIp?: string;
   deviceModel?: string;
   createdAt: string;
+  // ---- 方案 B：双人决策 + 落库状态 + 原始快照 ----
+  ownerDecision?: PendingDecision;  // 楼主决定（先到先生效）
+  adminDecision?: PendingDecision;  // 管理员决定（优先级最高，覆盖楼主）
+  applied?: boolean;                // 当前提议是否已写入主库
+  original?: Room;                  // 改动前的房间快照（管理员翻盘回滚用）
 }
+
+// 待审决定：undefined/未设=未决
+export type PendingDecision = 'approve' | 'reject';
 
 // ---- 楼房 + 房间打包（同步用）----
 export interface BuildingWithRooms extends Building {

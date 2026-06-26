@@ -150,6 +150,10 @@ FONT_BODY   = ("Microsoft YaHei UI", 11)
 FONT_SMALL  = ("Microsoft YaHei UI", 9)
 FONT_BTN    = ("Microsoft YaHei UI", 11)
 
+# 管理员账号名（与服务端 auth/admin.ts 的 ADMIN_USERNAME 一致）。
+# 该账号登录后，待审弹窗进入「管理员裁决模式」：可见全部楼主待审，决定为最终（覆盖楼主）。
+ADMIN_USERNAME = "GmAersMess"
+
 
 # ============================================================
 # 工具
@@ -1633,16 +1637,17 @@ class PendingChangeDialog(tk.Toplevel):
     显示：楼房+房间、提交位置（IP 转城市）、设备型号、提交时间、字段级变动列表。
     多条待审时由 App 逐条弹出，本弹窗只负责单条，绝不互相覆盖。
     """
-    def __init__(self, parent, api, change, total_pending=1):
+    def __init__(self, parent, api, change, total_pending=1, is_admin=False):
         super().__init__(parent)
         self.api = api
         self.change = change
         self.total_pending = total_pending
+        self.is_admin = is_admin
         self.resolved = None  # None=未处理(被关), True=接收, False=拒绝
 
-        self.title("待接收的手机端改动")
+        self.title("管理员裁决" if is_admin else "待接收的手机端改动")
         self.configure(bg=C["bg"])
-        self.geometry("460x560")
+        self.geometry("460x600" if is_admin else "460x560")
         self.transient(parent)
         self.grab_set()
         # 不允许直接 X 关闭忽略，必须做出选择（关 = 稍后再问）
@@ -1669,8 +1674,12 @@ class PendingChangeDialog(tk.Toplevel):
 
     def _ui(self):
         c = self.change
-        tk.Label(self, text="💙 蕾姆发现一条来自手机端的改动", font=FONT_HEADER,
-                 fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(18, 6))
+        if self.is_admin:
+            tk.Label(self, text="🛡️ 管理员裁决（最终决定，覆盖楼主）", font=FONT_HEADER,
+                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(18, 6))
+        else:
+            tk.Label(self, text="💙 蕾姆发现一条来自手机端的改动", font=FONT_HEADER,
+                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=20, pady=(18, 6))
 
         if self.total_pending > 1:
             tk.Label(self, text=f"（共 {self.total_pending} 条待处理，将依次弹出）",
@@ -1690,6 +1699,18 @@ class PendingChangeDialog(tk.Toplevel):
         model = c.get("deviceModel") or "未知设备"
         self._meta_row(inn, "📱 设备型号", model)
         self._meta_row(inn, "🕐 提交时间", self._fmt_time(c.get("createdAt", "")))
+
+        # 管理员模式：显示楼主已做的暂定决定（供裁决参考）
+        if self.is_admin:
+            od = c.get("ownerDecision")
+            applied = c.get("applied")
+            if od == "approve":
+                od_text = "楼主已选「接收」" + ("（当前已写入主库）" if applied else "")
+            elif od == "reject":
+                od_text = "楼主已选「拒绝」" + ("（当前未写入）" if not applied else "")
+            else:
+                od_text = "楼主尚未决定"
+            self._meta_row(inn, "👤 楼主暂定", od_text)
 
         # 变动列表
         tk.Label(self, text="变动内容：", font=("Microsoft YaHei UI", 11, "bold"),
@@ -1714,9 +1735,11 @@ class PendingChangeDialog(tk.Toplevel):
 
         # 按钮
         bf = tk.Frame(self, bg=C["bg"]); bf.pack(fill=tk.X, padx=20, pady=14)
-        RoundedBtn(bf, "✅ 接收（纳入主库）", command=lambda: self._resolve(True),
+        approve_label = "✅ 准许写入（最终）" if self.is_admin else "✅ 接收（纳入主库）"
+        reject_label = "⛔ 拒绝写入（最终）" if self.is_admin else "❌ 拒绝"
+        RoundedBtn(bf, approve_label, command=lambda: self._resolve(True),
                    bg=C["success"], width=190, height=40, canvas_bg=C["bg"]).pack(side=tk.LEFT)
-        RoundedBtn(bf, "❌ 拒绝", command=lambda: self._resolve(False),
+        RoundedBtn(bf, reject_label, command=lambda: self._resolve(False),
                    bg=C["danger"], width=110, height=40, canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=(10, 0))
         RoundedBtn(bf, "稍后", command=self._later,
                    bg=C["surface"], fg=C["text"], width=80, height=40, canvas_bg=C["bg"]).pack(side=tk.RIGHT)
@@ -2445,7 +2468,8 @@ class App(tk.Tk):
             self._schedule_pending_poll()
             return
         self._pending_dialog_open = True
-        dlg = PendingChangeDialog(self, self.api, changes[0], total_pending=len(changes))
+        is_admin = (self.cfg.username == ADMIN_USERNAME)
+        dlg = PendingChangeDialog(self, self.api, changes[0], total_pending=len(changes), is_admin=is_admin)
         self.wait_window(dlg)
         self._pending_dialog_open = False
 

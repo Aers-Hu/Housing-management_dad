@@ -3,6 +3,7 @@ import { Users } from '../db/repo.ts';
 import { hashPassword, verifyPassword, createToken } from '../auth/crypto.ts';
 import { authRequired, getUserId } from '../middleware/auth.ts';
 import { rateLimit } from '../middleware/rateLimit.ts';
+import { ADMIN_USERNAME, machineIdMatches, isLoopbackIp } from '../auth/admin.ts';
 
 const router = Router();
 
@@ -17,6 +18,10 @@ router.post('/register', authLimiter, (req, res) => {
   const { username, password } = req.body ?? {};
   if (typeof username !== 'string' || !USERNAME_RE.test(username)) {
     return res.status(400).json({ error: '用户名需为 3-30 位字母、数字或下划线' });
+  }
+  // 禁止任何人注册管理员账号名（该账号由服务端启动时种入并写死）
+  if (username.toLowerCase() === ADMIN_USERNAME.toLowerCase()) {
+    return res.status(403).json({ error: '该用户名已被系统保留' });
   }
   if (typeof password !== 'string' || password.length < 6) {
     return res.status(400).json({ error: '密码至少 6 位' });
@@ -34,6 +39,13 @@ router.post('/login', authLimiter, (req, res) => {
   const { username, password } = req.body ?? {};
   if (typeof username !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ error: '缺少用户名或密码' });
+  }
+  // 管理员账号设备锁（登录环节）：必须本机这台电脑的电脑端，否则连登录都不放行。
+  // 手机端/其它电脑没有匹配的 X-Machine-Id 或非本机回环来源，一律拒绝。
+  if (username.toLowerCase() === ADMIN_USERNAME.toLowerCase()) {
+    if (!machineIdMatches(req.headers['x-machine-id']) || !isLoopbackIp(req.ip)) {
+      return res.status(403).json({ error: '管理员账号仅限本机电脑端登录使用' });
+    }
   }
   const record = Users.findByUsername(username);
   if (!record || !verifyPassword(password, record.passwordHash)) {

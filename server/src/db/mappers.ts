@@ -65,8 +65,10 @@ export function rowToAccountGrant(r: any): AccountGrant {
 export function rowToPendingChange(r: any): PendingChange {
   let proposed: any = {};
   let diff: any[] = [];
+  let original: any = undefined;
   try { proposed = JSON.parse(r.proposed); } catch { proposed = {}; }
   try { diff = JSON.parse(r.diff); } catch { diff = []; }
+  if (r.original) { try { original = JSON.parse(r.original); } catch { original = undefined; } }
   return {
     id: r.id,
     ownerId: r.owner_id,
@@ -78,5 +80,9 @@ export function rowToPendingChange(r: any): PendingChange {
     submitterIp: r.submitter_ip ?? undefined,
     deviceModel: r.device_model ?? undefined,
     createdAt: r.created_at,
+    ownerDecision: r.owner_decision ?? undefined,
+    adminDecision: r.admin_decision ?? undefined,
+    applied: !!r.applied,
+    original,
   };
 }

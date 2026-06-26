@@ -15,6 +15,29 @@ import urllib.error
 
 
 # ============================================================
+# 本机机器指纹（Windows MachineGuid）
+# 管理员账号 GmAersMess 被服务端写死「只准带本机 MachineGuid 的电脑端登录」，
+# 这里读取本机注册表里的 MachineGuid，随每个请求带上 X-Machine-Id 头。
+# 非 Windows 或读取失败则返回空串（普通账号不受影响，仅管理员账号会被服务端拒）。
+# ============================================================
+def _read_machine_id():
+    try:
+        import winreg  # 仅 Windows 有
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                             r"SOFTWARE\Microsoft\Cryptography")
+        try:
+            val, _ = winreg.QueryValueEx(key, "MachineGuid")
+            return str(val).strip()
+        finally:
+            winreg.CloseKey(key)
+    except Exception:
+        return ""
+
+
+MACHINE_ID = _read_machine_id()
+
+
+# ============================================================
 # 异常
 # ============================================================
 class NetworkError(Exception):
@@ -114,6 +137,10 @@ class ApiClient:
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Content-Type", "application/json")
+        # 标识本机电脑端 + 机器指纹：管理员账号靠这两个头通过服务端设备锁
+        req.add_header("X-Client-Type", "desktop")
+        if MACHINE_ID:
+            req.add_header("X-Machine-Id", MACHINE_ID)
         if auth and self.cfg.token:
             req.add_header("Authorization", "Bearer " + self.cfg.token)
         try:

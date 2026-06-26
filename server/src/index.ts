@@ -8,12 +8,16 @@ import { initSchema, DB_PATH, db } from "./db/index.ts";
 import dataRoutes from "./routes/data.ts";
 import authRoutes from "./routes/auth.ts";
 import { authRequired } from "./middleware/auth.ts";
+import { seedAdmin } from "./db/repo.ts";
 
 const app = express();
 const port = process.env.PORT || 9091;
 
 // 初始化数据库表结构
 initSchema();
+
+// 种入管理员账号（已存在则仅回填 id）。放在建表之后，保证 users 表已就绪。
+seedAdmin();
 
 // 隧道/反向代理后，真实客户端 IP 在 x-forwarded-for 里（限流取 IP 用）
 app.set('trust proxy', true);

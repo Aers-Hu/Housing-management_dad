@@ -129,6 +129,31 @@ export function initSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_agrant_owner       ON account_grants(owner_id);
     CREATE INDEX IF NOT EXISTS idx_pending_owner      ON pending_changes(owner_id, created_at);
   `);
+
+  migratePendingChanges();
+}
+
+// ============================================================
+// 迁移：为 pending_changes 增补「双人决策 + 落库状态 + 原始快照」列
+//   owner_decision : 楼主决定  NULL=未决 / 'approve' / 'reject'
+//   admin_decision : 管理员决定（优先级最高，覆盖楼主）同上取值
+//   applied        : 当前提议是否已写入主库  0/1（方案 B：先到先生效）
+//   original       : JSON，改动前的房间快照（管理员翻盘回滚时按字段还原用）
+// 用 PRAGMA 检测列是否已存在，幂等：已迁移过则跳过，老库平滑升级不丢数据。
+// ============================================================
+function migratePendingChanges(): void {
+  const cols = new Set<string>(
+    (db.prepare(`PRAGMA table_info(pending_changes)`).all() as any[]).map((c) => c.name)
+  );
+  const addCol = (name: string, ddl: string) => {
+    if (!cols.has(name)) {
+      db.exec(`ALTER TABLE pending_changes ADD COLUMN ${ddl};`);
+    }
+  };
+  addCol('owner_decision', 'owner_decision TEXT');
+  addCol('admin_decision', 'admin_decision TEXT');
+  addCol('applied', 'applied INTEGER NOT NULL DEFAULT 0');
+  addCol('original', 'original TEXT');
 }
 
 export { DB_PATH };

@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyToken } from '../auth/crypto.ts';
+import { isAdminUser, machineIdMatches, isLoopbackIp } from '../auth/admin.ts';
 
 // ============================================================
 // 鉴权中间件：解析 Authorization: Bearer <token>
@@ -12,6 +13,15 @@ export function authRequired(req: Request, res: Response, next: NextFunction) {
   const result = token ? verifyToken(token) : null;
   if (!result) {
     return res.status(401).json({ error: '未登录或登录已过期' });
+  }
+  // 管理员账号设备锁：每个请求都要求来自本机这台电脑的电脑端
+  //  - X-Machine-Id 必须等于写死的本机 MachineGuid
+  //  - 来源必须是本机回环（127.0.0.1 / ::1）
+  // 手机端/其它电脑无法同时满足，token 即便有效也会被拒。
+  if (isAdminUser(result.uid)) {
+    if (!machineIdMatches(req.headers['x-machine-id']) || !isLoopbackIp(req.ip)) {
+      return res.status(403).json({ error: '管理员账号仅限本机电脑端登录使用' });
+    }
   }
   res.locals.userId = result.uid;
   next();

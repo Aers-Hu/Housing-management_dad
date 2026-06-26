@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { db } from './index.ts';
 import { rowToBuilding, rowToRoom, rowToAccessRequest, rowToAccountGrant, rowToUser, rowToPendingChange } from './mappers.ts';
 import type { Building, Room, AccessRequest, AccountGrant, User, AccessLevel, PendingChange, PendingDiffItem } from '../types.ts';
+import { hashPassword } from '../auth/crypto.ts';
+import { ADMIN_USERNAME, ADMIN_PASSWORD, setAdminUserId } from '../auth/admin.ts';
 
 const genId = (prefix: string) => `${prefix}_${randomUUID()}`;
 
@@ -309,7 +311,17 @@ export const AccountGrants = {
 };
 
 // ============================================================
-// PendingChanges（待审改动：手机端离线重放先入此表，owner 逐条批准）
+// PendingChanges（待审改动：手机端离线重放先入此表）
+//
+// 方案 B（先到先生效，管理员可事后翻盘）下的字段语义：
+//   owner_decision : 楼主决定（先到先生效后即记录，记录仍保留以便管理员翻盘）
+//   admin_decision : 管理员决定（优先级最高）。管理员一裁决即为最终，记录随后删除。
+//   applied        : 当前提议是否已落主库（用于判断管理员翻盘时要写入还是回滚）
+//   original       : 改动前的房间快照（管理员翻盘回滚时按字段精准还原）
+//
+// 队列可见性：
+//   楼主  → 只看自己名下「楼主尚未决定」的（owner_decision IS NULL）
+//   管理员 → 看「尚未最终裁决」的全部楼主待审（admin_decision IS NULL，即全部存活记录）
 // ============================================================
 export const PendingChanges = {
   create(args: {
@@ -319,6 +331,7 @@ export const PendingChanges = {
     submitterId: string;
     proposed: Room;
     diff: PendingDiffItem[];
+    original: Room;
     submitterIp?: string;
     deviceModel?: string;
   }): PendingChange {
@@ -326,8 +339,8 @@ export const PendingChanges = {
     const createdAt = new Date().toISOString();
     db.prepare(
       `INSERT INTO pending_changes
-        (id, owner_id, building_id, room_id, submitter_id, proposed, diff, submitter_ip, device_model, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, owner_id, building_id, room_id, submitter_id, proposed, diff, original, submitter_ip, device_model, created_at, applied)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
     ).run(
       id,
       args.ownerId,
@@ -336,6 +349,7 @@ export const PendingChanges = {
       args.submitterId,
       JSON.stringify(args.proposed),
       JSON.stringify(args.diff),
+      JSON.stringify(args.original),
       args.submitterIp ?? null,
       args.deviceModel ?? null,
       createdAt
@@ -343,17 +357,32 @@ export const PendingChanges = {
     return this.findById(id)!;
   },
 
-  // 某 owner 名下的全部待审，按时间正序（便于电脑端逐条处理），附楼房名与房间号
+  // 楼主视角：自己名下、楼主尚未决定的待审（按时间正序），附楼房名与房间号
   listForOwner(ownerId: string): (PendingChange & { buildingName: string; roomNumber: string })[] {
+    return this._listWhere(
+      `WHERE p.owner_id = ? AND p.owner_decision IS NULL ORDER BY p.created_at ASC`,
+      [ownerId]
+    );
+  },
+
+  // 管理员视角：全部楼主、尚未最终裁决的待审（按时间正序）
+  listForAdmin(): (PendingChange & { buildingName: string; roomNumber: string })[] {
+    return this._listWhere(
+      `WHERE p.admin_decision IS NULL ORDER BY p.created_at ASC`,
+      []
+    );
+  },
+
+  _listWhere(whereClause: string, params: any[]): (PendingChange & { buildingName: string; roomNumber: string })[] {
     const rows: any[] = db
       .prepare(
         `SELECT p.*, b.name AS _bld_name, r.number AS _room_number
          FROM pending_changes p
          JOIN buildings b ON b.id = p.building_id
          JOIN rooms r     ON r.id = p.room_id
-         WHERE p.owner_id = ? ORDER BY p.created_at ASC`
+         ${whereClause}`
       )
-      .all(ownerId);
+      .all(...params);
     return rows.map((r) => ({
       ...rowToPendingChange(r),
       buildingName: r._bld_name,
@@ -366,9 +395,36 @@ export const PendingChanges = {
     return r ? rowToPendingChange(r) : null;
   },
 
+  // 记录楼主决定（先到先生效后调用，记录保留供管理员翻盘）
+  setOwnerDecision(id: string, decision: 'approve' | 'reject'): void {
+    db.prepare('UPDATE pending_changes SET owner_decision = ? WHERE id = ?').run(decision, id);
+  },
+
+  // 更新「当前是否已落主库」标记
+  setApplied(id: string, applied: boolean): void {
+    db.prepare('UPDATE pending_changes SET applied = ? WHERE id = ?').run(applied ? 1 : 0, id);
+  },
+
   delete(id: string): void {
     db.prepare('DELETE FROM pending_changes WHERE id = ?').run(id);
   },
 };
+
+// ============================================================
+// 管理员账号种入：服务端启动时调用。
+//   - 已存在 → 仅回填 adminUserId
+//   - 不存在 → 自动创建（密码 scrypt 哈希）
+// 这样即便测试清库把它删了，重启服务端也会自动重建。
+// ============================================================
+export function seedAdmin(): void {
+  const existing = Users.findByUsername(ADMIN_USERNAME);
+  if (existing) {
+    setAdminUserId(existing.id);
+    return;
+  }
+  const user = Users.create(ADMIN_USERNAME, hashPassword(ADMIN_PASSWORD));
+  setAdminUserId(user.id);
+  console.log(`✅ 已自动种入管理员账号：${ADMIN_USERNAME}`);
+}
 
 export { genId };

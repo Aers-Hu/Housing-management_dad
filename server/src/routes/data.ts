@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { Buildings, Rooms, Users, AccessRequests, AccountGrants, PendingChanges } from '../db/repo.ts';
 import { getUserId } from '../middleware/auth.ts';
-import type { Room, RentRecord, PendingDiffItem } from '../types.ts';
+import { isAdminUser } from '../auth/admin.ts';
+import type { Room, RentRecord, PendingDiffItem, PendingChange } from '../types.ts';
 
 const router = Router();
 
@@ -158,6 +159,7 @@ router.put('/rooms/:id', (req, res) => {
       submitterId: userId,
       proposed: merged as Room,
       diff,
+      original: existing,   // 改动前快照：管理员翻盘回滚时按字段精准还原
       submitterIp,
       deviceModel,
     });
@@ -279,33 +281,98 @@ router.delete('/grantees/:granteeId', (req, res) => {
 // ============================================================
 
 // 列出当前用户名下待审的全部改动（按时间正序，逐条处理）
+//   管理员 → 全部楼主的待审（admin_decision 尚未最终裁决）
+//   楼主   → 仅自己名下、楼主尚未决定的
 router.get('/pending-changes', (req, res) => {
   const userId = getUserId(req);
-  res.json({ pendingChanges: PendingChanges.listForOwner(userId) });
+  const list = isAdminUser(userId)
+    ? PendingChanges.listForAdmin()
+    : PendingChanges.listForOwner(userId);
+  res.json({ pendingChanges: list });
 });
 
+// ============================================================
+// 按 diff 涉及的字段，把房间「精准还原/套用」到目标快照的对应字段值。
+// 只动这次改过的字段，不碰别人事后改的其它字段（方案 B 安全回滚关键）。
+//   target=proposed → 套用提议；target=original → 回滚到改动前
+// rent:<month> 这类交租字段，整组 rentRecords 一并以 target 为准。
+// ============================================================
+function applyFieldsFromSnapshot(current: Room, target: Room, diff: PendingDiffItem[]): Room {
+  const next: any = { ...current };
+  let touchedRent = false;
+  for (const d of diff) {
+    if (d.field.startsWith('rent:')) {
+      touchedRent = true;
+      continue;
+    }
+    next[d.field] = (target as any)[d.field];
+  }
+  if (touchedRent) {
+    next.rentRecords = (target as any).rentRecords;
+  }
+  return next as Room;
+}
+
+// ============================================================
+// 调和：依据「楼主决定 + 管理员决定」算出该提议最终应否落库，并把主库状态对齐。
+// 优先级：管理员决定 > 楼主决定。任一方说 approve→应落库；说 reject→不应落库。
+// 谁的决定更高优先且已表态，就用谁的；都未表态视为不落库。
+// 然后比较「应否落库」与「当前 applied」，必要时套用提议或回滚到原始快照。
+// ============================================================
+function reconcile(pending: PendingChange, ownerDecision?: 'approve' | 'reject', adminDecision?: 'approve' | 'reject'): boolean {
+  // 最终裁决：管理员优先，否则看楼主
+  const finalDecision = adminDecision ?? ownerDecision;
+  const shouldApply = finalDecision === 'approve';
+
+  const room = Rooms.findById(pending.roomId);
+  if (!room) {
+    // 房间已被删，无可套用/回滚
+    return false;
+  }
+
+  if (shouldApply && !pending.applied) {
+    // 需要落库但还没落：按字段套用提议
+    Rooms.update(applyFieldsFromSnapshot(room, pending.proposed, pending.diff));
+    PendingChanges.setApplied(pending.id, true);
+  } else if (!shouldApply && pending.applied) {
+    // 不该落库但已落（楼主先批了、管理员翻盘拒绝）：按字段回滚到改动前
+    if (pending.original) {
+      Rooms.update(applyFieldsFromSnapshot(room, pending.original, pending.diff));
+    }
+    PendingChanges.setApplied(pending.id, false);
+  }
+  return shouldApply;
+}
+
 // 批准 / 拒绝某条待审改动
+//   楼主   → 先到先生效（记录保留，管理员仍可翻盘）
+//   管理员 → 最终裁决（覆盖楼主），裁决后记录删除
 router.post('/pending-changes/:id/resolve', (req, res) => {
   const userId = getUserId(req);
   const { action } = req.body ?? {}; // 'approve' | 'reject'
+  if (action !== 'approve' && action !== 'reject') {
+    return res.status(400).json({ error: 'action 须为 approve 或 reject' });
+  }
   const pending = PendingChanges.findById(req.params.id);
   if (!pending) return res.status(404).json({ error: '该改动不存在或已处理' });
-  if (pending.ownerId !== userId) return res.status(403).json({ error: '无权处理该改动' });
 
-  if (action === 'approve') {
-    // 房间可能在审批前已被删；存在才套用提议
-    const existing = Rooms.findById(pending.roomId);
-    if (existing) {
-      const merged = { ...existing, ...pending.proposed, id: existing.id, buildingId: existing.buildingId };
-      Rooms.update(merged as Room);
-    }
-    PendingChanges.delete(pending.id);
-    return res.json({ ok: true, status: 'approved', applied: !!existing });
-  } else if (action === 'reject') {
-    PendingChanges.delete(pending.id);
-    return res.json({ ok: true, status: 'rejected' });
+  const admin = isAdminUser(userId);
+  // 权限：管理员可处理任意；楼主只能处理自己名下
+  if (!admin && pending.ownerId !== userId) {
+    return res.status(403).json({ error: '无权处理该改动' });
   }
-  return res.status(400).json({ error: 'action 须为 approve 或 reject' });
+
+  if (admin) {
+    // 管理员裁决 = 最终：按「管理员决定」调和主库，然后删除记录
+    const applied = reconcile(pending, pending.ownerDecision, action);
+    PendingChanges.delete(pending.id);
+    return res.json({ ok: true, status: action === 'approve' ? 'approved' : 'rejected', applied, byAdmin: true });
+  }
+
+  // 楼主决定：先到先生效，记录保留以便管理员翻盘
+  const applied = reconcile(pending, action, undefined);
+  PendingChanges.setOwnerDecision(pending.id, action);
+  return res.json({ ok: true, status: action === 'approve' ? 'approved' : 'rejected', applied, pendingAdmin: true });
 });
 
 export default router;
