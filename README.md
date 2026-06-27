@@ -250,6 +250,40 @@ pnpm -w lint:all       # 同时校验
 
 ---
 
+## 新用户如何使用
+
+如果你是新用户，只需：
+
+### 电脑端
+
+1. 安装 [Python 3.8+](https://www.python.org/downloads/)（安装时勾选「Add Python to PATH」）
+2. 从 GitHub 克隆项目：
+   ```bash
+   git clone https://github.com/Aers-Hu/Housing-management_dad.git
+   cd Housing-management_dad
+   ```
+3. （可选）安装 PyInstaller 并打包成 exe：
+   ```bash
+   pip install pyinstaller
+   pyinstaller --onedir --windowed --name "楼房管理系统" --clean house_management.py
+   ```
+   打包后双击 `dist/楼房管理系统/楼房管理系统.exe` 即可运行。
+   > 如果不想打包，也可以直接用源码运行：
+   > ```bash
+   > python house_management.py
+   > ```
+4. 打开程序后，在登录界面把「服务器地址」改成管理员给你的地址，然后注册账号即可
+
+### 手机端
+
+1. 安装管理员发给你的 APK
+2. 登录界面展开「服务器设置」，填入相同的服务器地址
+3. 用和电脑端**相同的账号**登录
+
+> 电脑和手机连接的是同一台服务器，数据自动互通，无需额外设置。
+
+---
+
 ## 核心功能
 
 - 管理多栋楼，自定义楼名、层数、每层房间数、楼层显示号
