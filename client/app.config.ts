@@ -15,6 +15,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/8ddfb094-5c7b-4bf2-8faf-a841593477a7",
+      "checkAutomatically": "ON_LOAD"
+    },
     "ios": {
       "supportsTablet": true
     },

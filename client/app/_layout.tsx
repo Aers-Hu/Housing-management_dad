@@ -5,6 +5,7 @@ import Toast from 'react-native-toast-message';
 import { Provider } from '@/components/Provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppUpdate } from '@/hooks/useAppUpdate';
 
 import '../global.css';
 
@@ -54,6 +55,8 @@ function AuthGate() {
 }
 
 export default function RootLayout() {
+  useAppUpdate();
+
   return (
     <Provider>
       <AuthGate />
