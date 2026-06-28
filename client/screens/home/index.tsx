@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -84,10 +84,51 @@ export default function HomeScreen() {
     }
   }, []);
 
+  // ---- 消息轮询：每 30 秒检查是否有新申请 ----
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevInboxCountRef = useRef(inboxCount);
+
+  // 保持 ref 与最新 inboxCount 同步
+  useEffect(() => {
+    prevInboxCountRef.current = inboxCount;
+  }, [inboxCount]);
+
+  const pollInbox = useCallback(async () => {
+    try {
+      const reqs = await getInbox();
+      const newCount = reqs.length;
+      const prevCount = prevInboxCountRef.current;
+      if (newCount > prevCount) {
+        // 有新申请到达，自动刷新数据并提示
+        setInboxCount(newCount);
+        await loadData();
+        Toast.show({
+          type: 'info',
+          text1: '收到新的查看申请',
+          text2: `您有 ${newCount} 条待处理申请`,
+        });
+      } else if (newCount !== prevCount) {
+        // 数量减少（可能是被处理了），仅更新数字
+        setInboxCount(newCount);
+      }
+    } catch {
+      // 离线/网络错误，静默忽略
+    }
+  }, [loadData]);
+
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [loadData])
+      // 启动 30 秒轮询
+      pollIntervalRef.current = setInterval(pollInbox, 30000);
+      return () => {
+        // 离开页面时清除轮询
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+      };
+    }, [loadData, pollInbox])
   );
 
   // ---- 通讯：申请查看 ----

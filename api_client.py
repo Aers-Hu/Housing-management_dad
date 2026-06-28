@@ -230,6 +230,15 @@ class ApiClient:
     def update_room(self, room_sid, body):
         return self._request("PUT", f"/rooms/{room_sid}", body)["room"]
 
+    def add_room(self, building_id, floor, number):
+        """在指定楼房楼层新增一个房间。"""
+        return self._request("POST", f"/buildings/{building_id}/rooms",
+                             {"floor": floor, "number": number})["room"]
+
+    def delete_room(self, room_sid):
+        """删除指定房间。"""
+        self._request("DELETE", f"/rooms/{room_sid}")
+
     # ---- 账号级通讯：申请查看 + 授权管理 ----
     def request_access(self, username):
         """申请查看某用户(按用户名)的全部楼房。"""

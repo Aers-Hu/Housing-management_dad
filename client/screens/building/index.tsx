@@ -15,8 +15,10 @@ import {
 import { Screen } from '@/components/Screen';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { StorageService } from '@/utils/storage';
-import { Building, Room, groupRoomsByFloor, getBuildingStats, getFloorLabel } from '@/utils/roomTypes';
+import { Building, Room, groupRoomsByFloor, getBuildingStats, getFloorLabel, generateRoomNumber } from '@/utils/roomTypes';
 import { useFocusEffect } from 'expo-router';
+import { FontAwesome6 } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 
 export default function BuildingScreen() {
   const router = useSafeRouter();
@@ -30,6 +32,15 @@ export default function BuildingScreen() {
   const [nameModalVisible, setNameModalVisible] = useState(false);
   const [namingRoom, setNamingRoom] = useState<Room | null>(null);
   const [roomNewName, setRoomNewName] = useState('');
+
+  // 房间操作菜单（长按弹出：命名 / 删除）
+  const [roomActionVisible, setRoomActionVisible] = useState(false);
+  const [actionRoom, setActionRoom] = useState<Room | null>(null);
+
+  // 添加房间弹窗
+  const [addRoomVisible, setAddRoomVisible] = useState(false);
+  const [addRoomFloor, setAddRoomFloor] = useState(0);
+  const [addRoomNumber, setAddRoomNumber] = useState('');
 
   // 编辑楼房菜单
   const [editMenuVisible, setEditMenuVisible] = useState(false);
@@ -79,15 +90,14 @@ export default function BuildingScreen() {
   // 是否只读（无写权限）
   const readOnly = building?.permission === 'read';
 
-  // 长按房间 → 命名（只读不可用）
+  // 长按房间 → 弹出操作菜单（命名/删除）
   const handleRoomLongPress = (room: Room) => {
     if (readOnly) {
       Alert.alert('权限不足', '你无法修改该用户的数据');
       return;
     }
-    setNamingRoom(room);
-    setRoomNewName(room.name);
-    setNameModalVisible(true);
+    setActionRoom(room);
+    setRoomActionVisible(true);
   };
 
   // 保存房间名称
@@ -101,6 +111,81 @@ export default function BuildingScreen() {
     await StorageService.updateRoom(updated);
     setNameModalVisible(false);
     setNamingRoom(null);
+    await loadData();
+  };
+
+  // 打开命名弹窗（从操作菜单）
+  const openRenameFromAction = () => {
+    if (!actionRoom) return;
+    setNamingRoom(actionRoom);
+    setRoomNewName(actionRoom.name);
+    setRoomActionVisible(false);
+    setTimeout(() => setNameModalVisible(true), 250);
+  };
+
+  // 删除房间
+  const handleDeleteRoom = () => {
+    if (!actionRoom) return;
+    const room = actionRoom;
+    setRoomActionVisible(false);
+
+    if (room.isOccupied) {
+      setTimeout(() => {
+        Alert.alert('无法删除', `房间 ${room.number} 当前有租客入住，请先退租后再删除。`);
+      }, 300);
+      return;
+    }
+
+    setTimeout(() => {
+      Alert.alert(
+        '确认删除',
+        `确定要删除 ${room.number}${room.name ? `（${room.name}）` : ''} 房间吗？此操作不可恢复。`,
+        [
+          { text: '取消', style: 'cancel' },
+          {
+            text: '删除',
+            style: 'destructive',
+            onPress: async () => {
+              await StorageService.deleteRoom(room.buildingId, room.id);
+              Toast.show({ type: 'success', text1: `已删除 ${room.number} 房间` });
+              await loadData();
+            },
+          },
+        ]
+      );
+    }, 300);
+  };
+
+  // 打开添加房间弹窗（为指定楼层）
+  const openAddRoom = (floor: number) => {
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
+    setAddRoomFloor(floor);
+    // 自动生成房间号：取该层已有最大编号 + 1
+    const floorRooms = rooms.filter((r) => r.floor === floor);
+    const maxNum = floorRooms.reduce((max, r) => {
+      const n = parseInt(r.number, 10);
+      return isNaN(n) ? max : Math.max(max, n);
+    }, 0);
+    const nextNum = maxNum > 0 ? String(maxNum + 1) : `${floor}01`;
+    setAddRoomNumber(nextNum);
+    setAddRoomVisible(true);
+  };
+
+  // 确认添加房间
+  const handleAddRoom = async () => {
+    if (!buildingId || !addRoomFloor) return;
+    const number = addRoomNumber.trim();
+    if (!number) {
+      Alert.alert('提示', '请输入房间号');
+      return;
+    }
+    await StorageService.addRoom(buildingId, addRoomFloor, number);
+    setAddRoomVisible(false);
+    setAddRoomNumber('');
+    Toast.show({ type: 'success', text1: `已在 ${getFloorLabel(building, addRoomFloor)} 楼添加 ${number} 房间` });
     await loadData();
   };
 
@@ -236,6 +321,16 @@ export default function BuildingScreen() {
                 <Text style={styles.floorInfo}>
                   {floorRooms.filter(r => r.isOccupied).length}/{floorRooms.length} 已入住
                 </Text>
+                {!readOnly && (
+                  <TouchableOpacity
+                    style={styles.addRoomBtn}
+                    onPress={() => openAddRoom(floor)}
+                    activeOpacity={0.7}
+                  >
+                    <FontAwesome6 name="plus" size={12} color="#6C63FF" />
+                    <Text style={styles.addRoomBtnText}>房间</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               <View style={styles.roomsGrid}>
@@ -317,6 +412,81 @@ export default function BuildingScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.saveBtn} onPress={handleSaveRoomName}>
                   <Text style={styles.saveBtnText}>保存</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* ========== 房间操作菜单 Modal（长按弹出） ========== */}
+      <Modal
+        visible={roomActionVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRoomActionVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setRoomActionVisible(false)}
+        >
+          <View style={styles.actionSheet}>
+            <Text style={styles.actionTitle}>
+              {actionRoom?.number}{actionRoom?.name ? ` · ${actionRoom.name}` : ''}
+            </Text>
+            <TouchableOpacity style={styles.actionItem} onPress={openRenameFromAction}>
+              <Text style={styles.actionItemText}>✏️  命名房间</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemDanger]}
+              onPress={handleDeleteRoom}
+            >
+              <Text style={[styles.actionItemText, styles.actionItemTextDanger]}>🗑️  删除房间</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemCancel]}
+              onPress={() => setRoomActionVisible(false)}
+            >
+              <Text style={styles.actionItemText}>取消</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ========== 添加房间 Modal ========== */}
+      <Modal
+        visible={addRoomVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAddRoomVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View style={styles.nameModalContent}>
+              <Text style={styles.nameModalTitle}>
+                在 {building ? getFloorLabel(building, addRoomFloor) : addRoomFloor} 楼添加房间
+              </Text>
+              <Text style={styles.inputLabel}>房间号</Text>
+              <TextInput
+                style={styles.nameInput}
+                value={addRoomNumber}
+                onChangeText={setAddRoomNumber}
+                placeholder="例如：801"
+                placeholderTextColor="#B2BEC3"
+                autoFocus
+              />
+              <View style={styles.nameModalButtons}>
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => { setAddRoomVisible(false); setAddRoomNumber(''); }}
+                >
+                  <Text style={styles.cancelBtnText}>取消</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={handleAddRoom}>
+                  <Text style={styles.saveBtnText}>添加</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -644,6 +814,29 @@ const styles = StyleSheet.create({
   bottomPadding: {
     height: 40,
   },
+  // 楼层添加房间按钮
+  addRoomBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: 'rgba(108, 99, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+  },
+  addRoomBtnText: {
+    fontSize: 12,
+    color: '#6C63FF',
+    fontWeight: '700',
+  },
+  // 输入标签
+  inputLabel: {
+    fontSize: 13,
+    color: '#636E72',
+    marginBottom: 8,
+  },
   // Modal
   modalOverlay: {
     flex: 1,
@@ -737,10 +930,16 @@ const styles = StyleSheet.create({
     borderColor: '#E8E8EB',
     marginTop: 4,
   },
+  actionItemDanger: {
+    backgroundColor: '#FFF0F0',
+  },
   actionItemText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#2D3436',
+  },
+  actionItemTextDanger: {
+    color: '#FF6B6B',
   },
   // 表单弹窗
   formSheet: {

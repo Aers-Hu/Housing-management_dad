@@ -552,6 +552,40 @@ class DataStore:
         self._snapshots.pop(bid, None)
         self._write_cache()
 
+    def add_room(self, building_idx, floor, number):
+        """在指定楼房楼层新增房间，并重载该楼。"""
+        if building_idx < 0 or building_idx >= len(self._buildings):
+            raise ValueError("楼房不存在")
+        b = self._buildings[building_idx]
+        bid = b["id"]
+        # 调用服务器 API 新增房间
+        self.api.add_room(bid, floor, number)
+        # 重载该楼，保持本地结构与服务器一致
+        detail = self.api.get_building(bid)
+        pb = server_building_to_py(detail["building"], detail["rooms"])
+        self._buildings[building_idx] = pb
+        self._snapshots[bid] = copy.deepcopy(pb)
+        self._write_cache()
+        return pb
+
+    def delete_room(self, building_idx, room):
+        """删除指定房间，并重载该楼。"""
+        if building_idx < 0 or building_idx >= len(self._buildings):
+            raise ValueError("楼房不存在")
+        sid = room.get("_sid")
+        if not sid:
+            raise ValueError("该房间没有服务器 ID，无法删除")
+        b = self._buildings[building_idx]
+        bid = b["id"]
+        self.api.delete_room(sid)
+        # 重载该楼
+        detail = self.api.get_building(bid)
+        pb = server_building_to_py(detail["building"], detail["rooms"])
+        self._buildings[building_idx] = pb
+        self._snapshots[bid] = copy.deepcopy(pb)
+        self._write_cache()
+        return pb
+
     def find(self, bid):
         for i, b in enumerate(self._buildings):
             if b.get("id") == bid: return i, b
@@ -573,9 +607,11 @@ class BuildingDialog(tk.Toplevel):
         is_edit = building is not None
 
         self.title("编辑楼房" if is_edit else "添加楼房")
-        self.resizable(False, False)
+        self.resizable(True, True)
+        self.minsize(420, 380)
         self.configure(bg=C["bg"])
         self.transient(parent); self.grab_set()
+
         self._ui()
         self._center(parent)
 
@@ -590,20 +626,49 @@ class BuildingDialog(tk.Toplevel):
     def _ui(self):
         pad_x = 24
 
+        # ---- 底部按钮（始终可见，先创建确保在底层） ----
+        bf = tk.Frame(self, bg=C["bg"])
+        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(12, 14), padx=pad_x)
+        RoundedBtn(bf, "取消", command=self.destroy,
+                   bg=C["border"], fg=C["text"], width=100, height=38,
+                   canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
+        RoundedBtn(bf, "💾 保存", command=self._save, width=100, height=38,
+                   canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
+
+        # ---- 主滚动区域（中间内容可滚动） ----
+        main_canvas = tk.Canvas(self, bg=C["bg"], highlightthickness=0)
+        main_scrollbar = tk.Scrollbar(self, orient=tk.VERTICAL, command=main_canvas.yview)
+        main_content = tk.Frame(main_canvas, bg=C["bg"])
+        main_content.bind("<Configure>",
+                          lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+        main_cw = main_canvas.create_window((0, 0), window=main_content, anchor=tk.NW)
+        main_canvas.configure(yscrollcommand=main_scrollbar.set)
+        main_canvas.bind("<Configure>",
+                         lambda e: main_canvas.itemconfig(main_cw, width=e.width))
+        # 主区域鼠标滚轮
+        def _on_main_scroll(event):
+            main_canvas.yview_scroll(int(-event.delta / 120), "units")
+        main_canvas.bind("<MouseWheel>", _on_main_scroll)
+
+        main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(0, 4))
+        main_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 4))
+
+        # ====== 以下所有内容 pack 到 main_content 中 ======
+
         # 标题
-        tk.Label(self, text="编辑楼房信息" if self.building else "添加新楼房",
-                 font=FONT_TITLE, fg=C["text"], bg=C["bg"]).pack(pady=(20,14))
+        tk.Label(main_content, text="编辑楼房信息" if self.building else "添加新楼房",
+                 font=FONT_TITLE, fg=C["text"], bg=C["bg"]).pack(pady=(20, 14))
 
         # 名称
-        tk.Label(self, text="楼房名称", font=FONT_BODY,
-                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(8,2))
+        tk.Label(main_content, text="楼房名称", font=FONT_BODY,
+                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(0, 2))
         self.name_var = tk.StringVar(value=self.building["name"] if self.building else "")
-        make_entry(self, self.name_var).pack(fill=tk.X, padx=pad_x, ipady=8)
+        make_entry(main_content, self.name_var).pack(fill=tk.X, padx=pad_x, ipady=8)
 
         # 层数
-        tk.Label(self, text="层数", font=FONT_BODY,
-                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(14,2))
-        f1 = tk.Frame(self, bg=C["bg"]); f1.pack(fill=tk.X, padx=pad_x)
+        tk.Label(main_content, text="层数", font=FONT_BODY,
+                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(14, 2))
+        f1 = tk.Frame(main_content, bg=C["bg"]); f1.pack(fill=tk.X, padx=pad_x)
         self.floors_var = tk.IntVar(value=self.building["floors"] if self.building else 5)
         tk.Scale(f1, from_=1, to=30, orient=tk.HORIZONTAL,
                  variable=self.floors_var, bg=C["bg"],
@@ -613,48 +678,81 @@ class BuildingDialog(tk.Toplevel):
         tk.Label(f1, textvariable=self.floors_var, font=FONT_BODY,
                  fg=C["primary"], bg=C["bg"], width=3).pack(side=tk.RIGHT)
 
-        # 每层户数
-        tk.Label(self, text="每层户数", font=FONT_BODY,
-                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(14,2))
-        f2 = tk.Frame(self, bg=C["bg"]); f2.pack(fill=tk.X, padx=pad_x)
-        self.rooms_var = tk.IntVar(value=self.building["rooms_per_floor"] if self.building else 4)
-        tk.Scale(f2, from_=1, to=10, orient=tk.HORIZONTAL,
-                 variable=self.rooms_var, bg=C["bg"],
-                 troughcolor=C["border"], activebackground=C["primary"],
-                 highlightthickness=0, length=380, fg=C["text"],
-                 font=FONT_SMALL).pack(side=tk.LEFT)
-        tk.Label(f2, textvariable=self.rooms_var, font=FONT_BODY,
-                 fg=C["primary"], bg=C["bg"], width=3).pack(side=tk.RIGHT)
+        # 每层户数（自由输入，不限上限）
+        tk.Label(main_content, text="每层户数", font=FONT_BODY,
+                 fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(14, 2))
+        f2 = tk.Frame(main_content, bg=C["bg"]); f2.pack(fill=tk.X, padx=pad_x)
+        # 仅允许输入数字
+        vcmd_rooms = (self.register(lambda p: p == "" or p.isdigit()), '%P')
+        self.rooms_var = tk.StringVar(value=str(self.building["rooms_per_floor"] if self.building else 4))
+        tk.Entry(f2, textvariable=self.rooms_var, font=FONT_BODY,
+                 relief=tk.FLAT, bd=0, bg=C["card"], fg=C["text"],
+                 insertbackground=C["primary"], width=8,
+                 highlightbackground=C["border"],
+                 highlightcolor=C["primary"], highlightthickness=1,
+                 validate='key', validatecommand=vcmd_rooms).pack(side=tk.LEFT, ipady=6)
+        tk.Label(f2, text=" 间/层", font=FONT_SMALL,
+                 fg=C["text_secondary"], bg=C["bg"]).pack(side=tk.LEFT)
 
         # ---- 修改楼层号（仅编辑模式） ----
-        self._floor_labels_frame = tk.Frame(self, bg=C["bg"])
+        self._floor_labels_frame = tk.Frame(main_content, bg=C["bg"])
 
         if self.building:
-            tk.Label(self, text="🏷️ 修改楼层号", font=FONT_HEADER,
-                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(18,4))
-            tk.Label(self, text="可为每层设置自定义名称（留空则使用默认编号）",
+            tk.Label(main_content, text="🏷️ 修改楼层号", font=FONT_HEADER,
+                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(18, 4))
+            tk.Label(main_content, text="可为每层设置自定义名称（留空则使用默认编号）",
                      font=FONT_SMALL, fg=C["text_secondary"],
-                     bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(0,6))
-            self._floor_labels_frame.pack(fill=tk.X, padx=20, pady=4)
+                     bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(0, 4))
+
+            # 带竖向滚动条的楼层号编辑区域
+            floor_scroll_frame = tk.Frame(main_content, bg=C["bg"])
+            floor_scroll_frame.pack(fill=tk.X, padx=20, pady=4)
+
+            floor_canvas = tk.Canvas(floor_scroll_frame, bg=C["bg"], height=180,
+                                     highlightthickness=0)
+            floor_scrollbar = tk.Scrollbar(floor_scroll_frame, orient=tk.VERTICAL,
+                                           command=floor_canvas.yview)
+            self._floor_labels_frame = tk.Frame(floor_canvas, bg=C["bg"])
+            self._floor_labels_frame.bind(
+                "<Configure>",
+                lambda e: floor_canvas.configure(scrollregion=floor_canvas.bbox("all")))
+            floor_cw = floor_canvas.create_window((0, 0), window=self._floor_labels_frame,
+                                                  anchor=tk.NW)
+            floor_canvas.configure(yscrollcommand=floor_scrollbar.set)
+            floor_canvas.bind("<Configure>",
+                             lambda e: floor_canvas.itemconfig(floor_cw, width=e.width))
+
+            floor_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            floor_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
             self._floor_entries = {}
             self._build_floor_label_entries()
+
+            # 递归为楼层标签区域内所有子控件绑定滚轮（确保鼠标在空白处也能滚动）
+            def _bind_scroll_all(widget, canvas):
+                widget.bind("<MouseWheel>",
+                            lambda e, c=canvas: c.yview_scroll(int(-e.delta / 120), "units"))
+                for child in widget.winfo_children():
+                    _bind_scroll_all(child, canvas)
+
+            self.after(60, lambda: _bind_scroll_all(self._floor_labels_frame, floor_canvas))
         else:
             self._floor_entries = {}
 
         # ---- 批量修改房屋名字（仅编辑模式） ----
         if self.building:
-            tk.Label(self, text="🔧 批量操作", font=FONT_HEADER,
-                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(18,4))
+            tk.Label(main_content, text="🔧 批量操作", font=FONT_HEADER,
+                     fg=C["text"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(18, 4))
 
             # 查找/替换行
-            br_frame = tk.Frame(self, bg=C["card"],
+            br_frame = tk.Frame(main_content, bg=C["card"],
                                 highlightbackground=C["border"], highlightthickness=1)
             br_frame.pack(fill=tk.X, padx=pad_x, pady=4)
             br_inner = tk.Frame(br_frame, bg=C["card"])
             br_inner.pack(fill=tk.X, padx=12, pady=10)
 
             tk.Label(br_inner, text="批量修改房屋名字", font=FONT_BODY,
-                     fg=C["text"], bg=C["card"]).pack(anchor=tk.W, pady=(0,8))
+                     fg=C["text"], bg=C["card"]).pack(anchor=tk.W, pady=(0, 8))
 
             row1 = tk.Frame(br_inner, bg=C["card"])
             row1.pack(fill=tk.X, pady=2)
@@ -680,12 +778,12 @@ class BuildingDialog(tk.Toplevel):
             # 示例提示
             tk.Label(br_inner, text="例：查找 01 替换为 81 → 0102 改名为 8102",
                      font=("Microsoft YaHei UI", 7), fg=C["text_dim"],
-                     bg=C["card"]).pack(anchor=tk.W, pady=(4,2))
+                     bg=C["card"]).pack(anchor=tk.W, pady=(4, 2))
 
             # 预览结果
             self.br_preview = tk.Label(br_inner, text="", font=FONT_SMALL,
                                        fg=C["primary"], bg=C["card"], justify=tk.LEFT)
-            self.br_preview.pack(anchor=tk.W, pady=(4,0))
+            self.br_preview.pack(anchor=tk.W, pady=(4, 0))
 
             # 监听输入变化实时预览
             self.br_find_var.trace_add("write", lambda *a: self._preview_rename())
@@ -694,19 +792,25 @@ class BuildingDialog(tk.Toplevel):
             # 应用按钮
             RoundedBtn(br_inner, "应用批量改名", command=self._apply_batch_rename,
                        bg=C["primary_dim"], fg=C["white"], font=FONT_SMALL,
-                       width=120, height=28, canvas_bg=C["card"]).pack(pady=(8,2))
+                       width=120, height=28, canvas_bg=C["card"]).pack(pady=(8, 2))
 
-        # ---- 按钮（直接在窗口底部） ----
-        bf = tk.Frame(self, bg=C["bg"])
-        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(16,14), padx=pad_x)
-        RoundedBtn(bf, "取消", command=self.destroy,
-                   bg=C["border"], fg=C["text"], width=100, height=38,
-                   canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
-        RoundedBtn(bf, "💾 保存", command=self._save, width=100, height=38,
-                   canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=6)
+        # 底部留白
+        tk.Frame(main_content, bg=C["bg"], height=8).pack()
 
         # 监听层数变化
         self.floors_var.trace_add("write", lambda *a: self._on_floors_change())
+
+        # 递归为 main_content 内所有子控件绑定主滚动区域的鼠标滚轮
+        # （确保鼠标在空白处也能滚动整页）
+        def _bind_main_scroll(widget):
+            # 跳过 Entry/Scale 等交互控件，避免滚动时误改输入值
+            if not isinstance(widget, (tk.Entry, tk.Scale, tk.Button, tk.Checkbutton)):
+                widget.bind("<MouseWheel>",
+                            lambda e: main_canvas.yview_scroll(int(-e.delta / 120), "units"))
+            for child in widget.winfo_children():
+                _bind_main_scroll(child)
+
+        self.after(80, lambda: _bind_main_scroll(main_content))
 
     def _build_floor_label_entries(self):
         for w in self._floor_labels_frame.winfo_children():
@@ -782,7 +886,9 @@ class BuildingDialog(tk.Toplevel):
         name = self.name_var.get().strip()
         if not name:
             messagebox.showwarning("提示", "请输入楼房名称", parent=self); return
-        floors, rpf = self.floors_var.get(), self.rooms_var.get()
+        rpf_str = self.rooms_var.get().strip()
+        rpf = int(rpf_str) if rpf_str else (self.building.get("rooms_per_floor", 4) if self.building else 4)
+        floors = self.floors_var.get()
 
         # 收集楼层标签
         floor_labels = {}
@@ -1954,6 +2060,11 @@ class App(tk.Tk):
         self._pending_poll_on = False
         self._pending_after_id = None
         self._start_pending_poll()
+        # 消息箱轮询：定时检查是否有新的查看申请
+        self._inbox_poll_on = False
+        self._inbox_after_id = None
+        self._prev_inbox_count = 0
+        self._start_inbox_poll()
 
     def _ensure_login(self):
         """确保已登录。返回 True=已登录，False=用户取消。"""
@@ -2571,7 +2682,13 @@ class App(tk.Tk):
         bind_scroll(ct, cv)
 
     def _draw_floor_hscroll(self, parent, building, floor_num, rpf, all_rooms, floor_labels):
-        """楼层视图 - 带横向滚动条"""
+        """楼层视图 - 带横向滚动条（支持不同楼层房间数不一致）"""
+
+        # 按 floor 字段筛选本层房间（优先用 _floor，回退到 id 前缀匹配）
+        f_rooms = [r for r in all_rooms
+                   if r.get("_floor", 0) == floor_num
+                   or r["id"].startswith(f"{floor_num:02d}")]
+        f_occ = sum(1 for r in f_rooms if r.get("occupied"))
 
         # 楼层标题
         fh = tk.Frame(parent, bg=C["bg"])
@@ -2589,10 +2706,19 @@ class App(tk.Tk):
         tk.Label(fh, text=display_name, font=FONT_HEADER,
                  fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT, padx=10)
 
-        f_rooms = [r for r in all_rooms if r["id"].startswith(f"{floor_num:02d}")]
-        f_occ = sum(1 for r in f_rooms if r.get("occupied"))
         tk.Label(fh, text=f"入住 {f_occ}/{len(f_rooms)}",
                  font=FONT_SMALL, fg=C["text_secondary"], bg=C["bg"]).pack(side=tk.LEFT, padx=10)
+
+        # ---- 添加房间按钮 ----
+        perm = building.get("_permission", "owner")
+        if perm != "read" and not self.dm.offline:
+            btn_frame = tk.Frame(fh, bg=C["bg"])
+            btn_frame.pack(side=tk.RIGHT, padx=(0, 0))
+            RoundedBtn(btn_frame, "+ 房间",
+                       command=lambda f=floor_num: self._on_add_room(building, f),
+                       bg=C["primary"], fg=C["white"],
+                       font=FONT_BTN, width=80, height=28,
+                       canvas_bg=C["bg"]).pack(side=tk.LEFT, padx=2)
 
         # ---- 横向滚动容器 ----
         h_container = tk.Frame(parent, bg=C["bg"])
@@ -2619,10 +2745,8 @@ class App(tk.Tk):
         # 让子 widget 也能传递滚轮事件到 canvas
         grid.bind("<MouseWheel>", _on_hwheel)
 
-        for rn in range(1, rpf+1):
-            rid = f"{floor_num:02d}{rn:02d}"
-            rd = next((r for r in all_rooms if r["id"]==rid), None)
-            if rd is None: rd = DataStore.new_room(rid)
+        # 按实际房间列表渲染（不再受 rpf 限制）
+        for rd in f_rooms:
             self._room_card(grid, rd, building).pack(side=tk.LEFT, padx=5, pady=5)
 
     def _room_card(self, parent, room, building):
@@ -2664,12 +2788,64 @@ class App(tk.Tk):
                      fg=C["text_dim"], bg=C["card"]).pack(pady=(6, 0))
 
         handler = lambda e, r=room, b=building: self._open_room(r, b)
+        # 右键菜单：删除房间
+        perm = building.get("_permission", "owner")
+        if perm != "read" and not self.dm.offline:
+            right_handler = lambda e, r=room: self._on_delete_room(building, r)
+            for wgt in [card, inn] + list(inn.winfo_children()):
+                wgt.bind("<Button-3>", right_handler)
         for wgt in [card, inn] + list(inn.winfo_children()):
             wgt.bind("<Button-1>", handler)
             wgt.bind("<Enter>", lambda e, c=card: c.configure(bg=C["card_hover"]))
             wgt.bind("<Leave>", lambda e, c=card: c.configure(bg=C["card"]))
 
         return card
+
+    def _on_add_room(self, building, floor_num):
+        """弹出对话框添加房间到指定楼层"""
+        if self.dm.offline:
+            messagebox.showwarning("离线", "离线模式下无法添加房间，请先连接服务器。")
+            return
+        number = simpledialog.askstring(
+            "添加房间",
+            f"在 {building['name']} 第 {floor_num} 层添加房间\n\n请输入房间号（如 {floor_num}01）：",
+            parent=self)
+        if not number or not number.strip():
+            return
+        number = number.strip()
+        try:
+            i, _ = self.dm.find(building["id"])
+            self.dm.add_room(i, floor_num, number)
+            # 刷新显示
+            self._show_room_grid(self.dm.buildings[i])
+            messagebox.showinfo("完成", f"已在 {building['name']} 第 {floor_num} 层添加 {number} 房间")
+        except Exception as e:
+            messagebox.showerror("错误", f"添加房间失败：{e}")
+
+    def _on_delete_room(self, building, room):
+        """右键菜单：删除房间"""
+        if self.dm.offline:
+            messagebox.showwarning("离线", "离线模式下无法删除房间，请先连接服务器。")
+            return
+        if room.get("occupied"):
+            messagebox.showwarning("无法删除", f"房间 {room.get('id', '?')} 当前有租客入住，请先退租后再删除。")
+            return
+        display = room.get("name", room.get("id", "?"))
+        if display == room.get("id", ""):
+            display = room.get("_number", display)
+        if not messagebox.askyesno(
+            "确认删除",
+            f"确定要删除 {building['name']} 的 {display} 房间吗？\n\n此操作不可恢复。",
+            parent=self):
+            return
+        try:
+            i, _ = self.dm.find(building["id"])
+            self.dm.delete_room(i, room)
+            # 刷新显示
+            self._show_room_grid(self.dm.buildings[i])
+            messagebox.showinfo("完成", f"已删除 {display} 房间")
+        except Exception as e:
+            messagebox.showerror("错误", f"删除房间失败：{e}")
 
     def _open_room(self, room, building):
         def on_save(upd):
@@ -2792,7 +2968,74 @@ class App(tk.Tk):
         if self._pending_after_id:
             try: self.after_cancel(self._pending_after_id)
             except Exception: pass
+        # 停止消息箱轮询
+        self._inbox_poll_on = False
+        if self._inbox_after_id:
+            try: self.after_cancel(self._inbox_after_id)
+            except Exception: pass
         self.dm.save(); self.destroy()
+
+    # ====== 消息箱轮询：自动检测新的查看申请 ======
+    INBOX_POLL_MS = 30000  # 每 30 秒检查一次
+
+    def _start_inbox_poll(self):
+        if self._inbox_poll_on:
+            return
+        self._inbox_poll_on = True
+        # 先初始化当前消息数
+        try:
+            self._prev_inbox_count = len(self.api.inbox()) if not self.dm.offline else 0
+        except Exception:
+            self._prev_inbox_count = 0
+        self._schedule_inbox_poll()
+
+    def _schedule_inbox_poll(self):
+        if not self._inbox_poll_on:
+            return
+        self._inbox_after_id = self.after(self.INBOX_POLL_MS, self._poll_inbox)
+
+    def _poll_inbox(self):
+        if self.dm.offline:
+            self._schedule_inbox_poll()
+            return
+        try:
+            new_count = len(self.api.inbox())
+        except Exception:
+            self._schedule_inbox_poll()
+            return
+
+        if new_count > self._prev_inbox_count:
+            # 有新申请到达：更新消息按钮 + 自动刷新数据
+            self._prev_inbox_count = new_count
+            self._refresh_msg_badge()
+            # 自动刷新楼房列表（让新授权立即可见）
+            self._refresh_data()
+            # 弹窗提示
+            try:
+                self.bell()  # 系统提示音
+            except Exception:
+                pass
+
+        elif new_count != self._prev_inbox_count:
+            # 数量变化（减少），只更新按钮
+            self._prev_inbox_count = new_count
+            self._refresh_msg_badge()
+
+        self._schedule_inbox_poll()
+
+    def _refresh_data(self):
+        """静默刷新数据（不弹窗），用于自动轮询时更新界面。"""
+        try:
+            self.dm.load()
+        except Exception:
+            return
+        # 如果当前在首页，刷新显示
+        if hasattr(self, 'nav') and self.nav:
+            try:
+                self._clear()
+                self.nav[-1]()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
