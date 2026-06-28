@@ -113,15 +113,28 @@ export function rebuildRoomsCStrategy(
   }
 
   // 待删房间：仅在对应字段被改动时才纳入
+  // 待删房间（C 策略：只删空房，按"要删的房间"是否有租客判断，而非整层）
   const toDelete: Room[] = [];
+  const problemFloors: number[] = [];
   for (const [floor, arr] of byFloor) {
-    if (floorsChanged && floor > floors) toDelete.push(...arr);
-    else if (rpfChanged && arr.length > roomsPerFloor) toDelete.push(...arr.slice(roomsPerFloor));
+    if (floorsChanged && floor > floors) {
+      if (arr.some((r) => r.isOccupied)) problemFloors.push(floor);
+      else toDelete.push(...arr);
+    } else if (rpfChanged && arr.length > roomsPerFloor) {
+      const occupied = arr.filter((r) => r.isOccupied);
+      if (occupied.length > roomsPerFloor) {
+        problemFloors.push(floor);                       // 租客本身超过新容量，腾不出
+      } else {
+        const removeCount = arr.length - roomsPerFloor;
+        const empties = arr.filter((r) => !r.isOccupied)
+          .sort((a, b) => b.number.localeCompare(a.number, undefined, { numeric: true }));
+        toDelete.push(...empties.slice(0, removeCount));  // 删号最大的空房
+      }
+    }
   }
 
-  // C 策略：待删房间有租客 → 拒绝
-  const occupiedFloors = [...new Set(toDelete.filter((r) => r.isOccupied).map((r) => r.floor))].sort((a, b) => a - b);
-  if (occupiedFloors.length > 0) return { occupiedFloors };
+  // C 策略：存在腾不出空间的层 → 拒绝
+  if (problemFloors.length > 0) return { occupiedFloors: problemFloors.sort((a, b) => a - b) };
 
   const deletedIds = new Set(toDelete.map((r) => r.id));
   const result: Room[] = existingRooms.filter((r) => !deletedIds.has(r.id));

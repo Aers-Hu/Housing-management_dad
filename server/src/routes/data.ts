@@ -108,11 +108,11 @@ router.put('/buildings/:id', (req, res) => {
     const building = Buildings.update(req.params.id, { name, floors, roomsPerFloor, floorLabels });
     res.json({ building });
   } catch (e) {
-    // C 策略：超出范围的房间有租客 → 拒绝缩减，返回 409 + 中文提示
+    // C 策略：要删除的房间里有租客（删层时该层有租客 / 减每层数时租客数超过新容量）→ 拒绝
     if (e instanceof RoomsOccupiedError) {
       const floorsText = e.occupiedFloors.join('、');
       return res.status(409).json({
-        error: `第 ${floorsText} 层仍有租客，请先处理租客（退租或转移）后再缩减楼层/房间数`,
+        error: `第 ${floorsText} 层的租客无法在缩减后的房间内安置，请先处理这些租客（退租或转移）再缩减`,
         occupiedFloors: e.occupiedFloors,
       });
     }

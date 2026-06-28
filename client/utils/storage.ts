@@ -201,7 +201,7 @@ async function updateBuildingLocal(
     );
     if (res.occupiedFloors) {
       const floorsText = res.occupiedFloors.join('、');
-      throw new ApiError(409, `第 ${floorsText} 层仍有租客，请先处理租客（退租或转移）后再缩减楼层/房间数`);
+      throw new ApiError(409, `第 ${floorsText} 层的租客无法在缩减后的房间内安置，请先处理这些租客（退租或转移）再缩减`);
     }
     await cacheSetRooms(building.id, res.rooms!);
   }
