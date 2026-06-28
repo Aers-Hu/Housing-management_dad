@@ -187,12 +187,15 @@ async function updateBuildingLocal(
   if (idx !== -1) list[idx] = merged; else list.push(merged);
   await cacheSetBuildings(list);
 
-  // 结构变化时按 C 策略重算房间：超范围房间有租客则拒绝（抛 ApiError 409，与在线一致）
+  // 结构变化时按 C 策略重算房间：只改的字段才生效；超范围房间有租客则拒绝（抛 ApiError 409，与在线一致）
   if (newFloors !== undefined || newRoomsPerFloor !== undefined) {
     const existing = await cacheGetRooms(building.id);
+    // merged 对未改字段保留原值、对改动字段已写入新值，作为补齐目标的兜底
     const res = rebuildRoomsCStrategy(
       building.id,
       existing,
+      newFloors,
+      newRoomsPerFloor,
       merged.floors,
       merged.roomsPerFloor
     );

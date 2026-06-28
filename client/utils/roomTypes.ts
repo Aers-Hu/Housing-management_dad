@@ -85,14 +85,22 @@ export function generateBuildingRooms(building: Building, existingRooms?: Room[]
 }
 
 // C 策略重算房间（与服务端 repo.ts Buildings.update 对齐）：
-//   超出新 floors/roomsPerFloor 范围的房间为「待删」；若其中有租客 → 返回 occupiedFloors（拒绝）；
-//   否则删除超出的空房并按每层数量补齐。返回 { rooms } 表示成功。
+//   仅当 newFloors 提供时按楼层删除；仅当 newRoomsPerFloor 提供时按每层数截断。
+//   若待删房间有租客 → 返回 occupiedFloors（拒绝）；否则删空房并补齐。
+//   storedFloors/storedRpf 用于未改字段的补齐目标兜底。
 export function rebuildRoomsCStrategy(
   buildingId: string,
   existingRooms: Room[],
-  newFloors: number,
-  newRoomsPerFloor: number
+  newFloors: number | undefined,
+  newRoomsPerFloor: number | undefined,
+  storedFloors: number,
+  storedRpf: number
 ): { rooms?: Room[]; occupiedFloors?: number[] } {
+  const floorsChanged = newFloors !== undefined;
+  const rpfChanged = newRoomsPerFloor !== undefined;
+  const floors = newFloors ?? storedFloors;
+  const roomsPerFloor = newRoomsPerFloor ?? storedRpf;
+
   // 按楼层分组（每层按 number 数值升序）
   const byFloor = new Map<number, Room[]>();
   for (const r of existingRooms) {
@@ -104,11 +112,11 @@ export function rebuildRoomsCStrategy(
     arr.sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
   }
 
-  // 待删房间：整层超范围，或每层超出 roomsPerFloor 的尾部
+  // 待删房间：仅在对应字段被改动时才纳入
   const toDelete: Room[] = [];
   for (const [floor, arr] of byFloor) {
-    if (floor > newFloors) toDelete.push(...arr);
-    else if (arr.length > newRoomsPerFloor) toDelete.push(...arr.slice(newRoomsPerFloor));
+    if (floorsChanged && floor > floors) toDelete.push(...arr);
+    else if (rpfChanged && arr.length > roomsPerFloor) toDelete.push(...arr.slice(roomsPerFloor));
   }
 
   // C 策略：待删房间有租客 → 拒绝
@@ -118,16 +126,17 @@ export function rebuildRoomsCStrategy(
   const deletedIds = new Set(toDelete.map((r) => r.id));
   const result: Room[] = existingRooms.filter((r) => !deletedIds.has(r.id));
 
-  // 按每层数量补齐到 roomsPerFloor
-  for (let floor = 1; floor <= newFloors; floor++) {
+  // 补齐：改了每层数→统一为 roomsPerFloor；只改层数→新空层补到 roomsPerFloor，已有房间的层保持不动
+  for (let floor = 1; floor <= floors; floor++) {
     const kept = (byFloor.get(floor) ?? []).filter((r) => !deletedIds.has(r.id));
     const usedNumbers = new Set(kept.map((r) => r.number));
+    const target = rpfChanged ? roomsPerFloor : (kept.length === 0 ? roomsPerFloor : kept.length);
     let idx = kept.length;
-    while (usedNumbers.size < newRoomsPerFloor) {
-      let number = generateRoomNumber(floor, idx, newRoomsPerFloor);
+    while (usedNumbers.size < target) {
+      let number = generateRoomNumber(floor, idx, target);
       while (usedNumbers.has(number)) {
         idx++;
-        number = generateRoomNumber(floor, idx, newRoomsPerFloor);
+        number = generateRoomNumber(floor, idx, target);
       }
       usedNumbers.add(number);
       result.push({

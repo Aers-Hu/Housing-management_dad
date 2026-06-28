@@ -5,7 +5,11 @@ import Toast from 'react-native-toast-message';
 import { Provider } from '@/components/Provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { useAuth } from '@/contexts/AuthContext';
+<<<<<<< HEAD
 import { useAppUpdate } from '@/hooks/useAppUpdate';
+=======
+import { useOtaUpdate } from '@/hooks/useOtaUpdate';
+>>>>>>> 1bfc8d7 (fix: 只改层数不再误删各层尾部房间 + OTA热更新启动提示)
 
 import '../global.css';
 
@@ -55,8 +59,12 @@ function AuthGate() {
 }
 
 export default function RootLayout() {
+<<<<<<< HEAD
   useAppUpdate();
 
+=======
+  useOtaUpdate(); // 启动时检查 OTA 热更新
+>>>>>>> 1bfc8d7 (fix: 只改层数不再误删各层尾部房间 + OTA热更新启动提示)
   return (
     <Provider>
       <AuthGate />

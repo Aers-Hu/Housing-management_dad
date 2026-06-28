@@ -128,11 +128,13 @@ export const Buildings = {
       `UPDATE buildings SET name = ?, floors = ?, rooms_per_floor = ?, floor_labels = ? WHERE id = ?`
     ).run(name, floors, roomsPerFloor, floorLabels ? JSON.stringify(floorLabels) : null, id);
 
-    // 楼层/每层数变化时，重算房间（C 策略）：
-    //   1. 先算出「新配置下应保留的房间集合」（按楼层分组，每层取前 roomsPerFloor 间）
-    //   2. 超出该集合的房间为「待删」；若其中任一间有租客 → 抛错拒绝整个修改（C 策略）
-    //   3. 全为空房才删除超出的房间，再补齐缺失的新房
-    if (fields.floors !== undefined || fields.roomsPerFloor !== undefined) {
+    // 楼层/每层数变化时，重算房间（C 策略）。关键：
+    //   - 只有「显式改了 floors」才按楼层删除（floor > floors）
+    //   - 只有「显式改了 roomsPerFloor」才按每层数截断（arr 尾部超出）
+    //   这样「只改层数」不会误删各层尾部房间（各层房间数可能本就不一致）。
+    const floorsChanged = fields.floors !== undefined;
+    const rpfChanged = fields.roomsPerFloor !== undefined;
+    if (floorsChanged || rpfChanged) {
       const existingRooms = Rooms.listByBuilding(id);
 
       // 按楼层分组（每层内按 number 升序，删多余时优先保留靠前的房间）
@@ -146,13 +148,13 @@ export const Buildings = {
         arr.sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
       }
 
-      // 找出「待删房间」：超出新楼层范围的整层，或每层超出 roomsPerFloor 的尾部
+      // 找出「待删房间」：仅在对应字段被改动时才纳入
       const toDelete: Room[] = [];
       for (const [floor, arr] of byFloor) {
-        if (floor > floors) {
-          toDelete.push(...arr);           // 整层超范围
-        } else if (arr.length > roomsPerFloor) {
-          toDelete.push(...arr.slice(roomsPerFloor)); // 该层尾部超出的房间
+        if (floorsChanged && floor > floors) {
+          toDelete.push(...arr);                       // 整层超范围（仅改了层数时）
+        } else if (rpfChanged && arr.length > roomsPerFloor) {
+          toDelete.push(...arr.slice(roomsPerFloor));  // 该层尾部超出（仅改了每层数时）
         }
       }
 
@@ -169,8 +171,9 @@ export const Buildings = {
         for (const r of toDelete) delStmt.run(r.id);
       }
 
-      // 补齐：按「每层保留后的数量」补到 roomsPerFloor（不按号码匹配，
-      // 因为减少每层数时房间号位数会变，号码无法直接对应）。
+      // 补齐房间。每层目标数量：
+      //   - 改了每层数：统一为 roomsPerFloor（所有层对齐新值）
+      //   - 只改了层数：新增的空层补到 roomsPerFloor（存储值）；已有房间的层保持原样不动
       const deletedIds = new Set(toDelete.map((r) => r.id));
       const insertRoom = db.prepare(
         `INSERT INTO rooms (id, building_id, floor, number, name, is_occupied, tenant_name, monthly_rent)
@@ -179,13 +182,13 @@ export const Buildings = {
       for (let floor = 1; floor <= floors; floor++) {
         const kept = (byFloor.get(floor) ?? []).filter((r) => !deletedIds.has(r.id));
         const usedNumbers = new Set(kept.map((r) => r.number));
+        const target = rpfChanged ? roomsPerFloor : (kept.length === 0 ? roomsPerFloor : kept.length);
         let idx = kept.length;
-        // 补到该层共有 roomsPerFloor 间（usedNumbers.size 即该层当前房间数）
-        while (usedNumbers.size < roomsPerFloor) {
-          let number = generateRoomNumber(floor, idx, roomsPerFloor);
+        while (usedNumbers.size < target) {
+          let number = generateRoomNumber(floor, idx, target);
           while (usedNumbers.has(number)) {
             idx++;
-            number = generateRoomNumber(floor, idx, roomsPerFloor);
+            number = generateRoomNumber(floor, idx, target);
           }
           usedNumbers.add(number);
           insertRoom.run(genId('room'), id, floor, number);

@@ -546,26 +546,37 @@ class DataStore:
         更新楼房。区分两类（对比上次服务器快照，因 UI 会原地修改对象）：
         - 结构性变更(名称/层数/每层数/楼层标签)：PUT 楼房，重载该楼
         - 房间内容变更：逐个比对 _sid，只 PUT 变化的房间
+        关键：floors/roomsPerFloor 只在「真正被用户改动」时才发送给服务端，
+        否则服务端不应据此重算房间（避免只改层数误删各层尾部房间）。
         """
         if idx < 0 or idx >= len(self._buildings):
             return
         bid = b["id"]
         old = self._snapshots.get(bid, {})
 
-        structural = (
-            b.get("name") != old.get("name") or
-            b.get("floors") != old.get("floors") or
-            b.get("rooms_per_floor") != old.get("rooms_per_floor") or
-            b.get("floor_labels") != old.get("floor_labels")
-        )
+        # 改动标记：优先用弹窗传来的显式标记，缺失则回退到快照对比
+        floors_changed = b.pop("_floors_changed", None)
+        rpf_changed = b.pop("_rpf_changed", None)
+        if floors_changed is None:
+            floors_changed = b.get("floors") != old.get("floors")
+        if rpf_changed is None:
+            rpf_changed = b.get("rooms_per_floor") != old.get("rooms_per_floor")
+        name_changed = b.get("name") != old.get("name")
+        labels_changed = b.get("floor_labels") != old.get("floor_labels")
+
+        structural = name_changed or labels_changed or floors_changed or rpf_changed
 
         if structural:
-            self.api.update_building(bid, {
+            body = {
                 "name": b.get("name", ""),
-                "floors": b.get("floors", 0),
-                "roomsPerFloor": b.get("rooms_per_floor", 0),
                 "floorLabels": b.get("floor_labels") or {},
-            })
+            }
+            # 只发送真正改动的维度，未改的不发 → 服务端不会据此动房间
+            if floors_changed:
+                body["floors"] = b.get("floors", 0)
+            if rpf_changed:
+                body["roomsPerFloor"] = b.get("rooms_per_floor", 0)
+            self.api.update_building(bid, body)
         else:
             # 房间内容变更：找出有 _sid 且内容变化的房间，逐个推送
             old_by_sid = {r.get("_sid"): r for r in old.get("rooms", []) if r.get("_sid")}
@@ -740,6 +751,9 @@ class BuildingDialog(tk.Toplevel):
         # 仅允许输入数字
         vcmd_rooms = (self.register(lambda p: p == "" or p.isdigit()), '%P')
         self.rooms_var = tk.StringVar(value=str((derive_rooms_per_floor(self.building.get("rooms", [])) or self.building.get("rooms_per_floor", 4)) if self.building else 4))
+        # 记录弹窗初始的层数/每层数，保存时只发送真正改动的字段（避免误删未改字段对应的房间）
+        self._initial_floors = self.floors_var.get()
+        self._initial_rpf = self.rooms_var.get().strip()
         tk.Entry(f2, textvariable=self.rooms_var, font=FONT_BODY,
                  relief=tk.FLAT, bd=0, bg=C["card"], fg=C["text"],
                  insertbackground=C["primary"], width=8,
@@ -960,16 +974,14 @@ class BuildingDialog(tk.Toplevel):
                     floor_labels[str(fn)] = val
 
         if self.building:
-            ex = self.building.get("rooms", [])
-            rooms = []
-            for f in range(1, floors+1):
-                for r in range(1, rpf+1):
-                    rid = f"{f:02d}{r:02d}"
-                    found = next((er for er in ex if er["id"]==rid), None)
-                    rooms.append(found if found else DataStore.new_room(rid))
+            # 只标记真正改动的结构字段，房间交给服务端按 C 策略处理（不在本地重建，避免按旧的统一模型误改）
+            floors_changed = (floors != self._initial_floors)
+            rpf_changed = (str(rpf) != str(self._initial_rpf))
             self.building.update(name=name, floors=floors,
-                                 rooms_per_floor=rpf, rooms=rooms,
-                                 floor_labels=floor_labels)
+                                 rooms_per_floor=rpf,
+                                 floor_labels=floor_labels,
+                                 _floors_changed=floors_changed,
+                                 _rpf_changed=rpf_changed)
             self.result = self.building
         else:
             rooms = [DataStore.new_room(f"{f:02d}{r:02d}")

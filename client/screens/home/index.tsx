@@ -59,6 +59,8 @@ export default function HomeScreen() {
   const [editName, setEditName] = useState('');
   const [editFloors, setEditFloors] = useState('');
   const [editRoomsPerFloor, setEditRoomsPerFloor] = useState('');
+  // 记录打开弹窗时的初始值，保存时只发送真正改动的字段（避免误删未改字段对应的房间）
+  const [editInitial, setEditInitial] = useState<{ floors: string; rpf: string }>({ floors: '', rpf: '' });
 
   // 操作菜单
   const [actionModalVisible, setActionModalVisible] = useState(false);
@@ -338,8 +340,11 @@ export default function HomeScreen() {
     setEditName(selectedBuilding.name);
     // 用真实推导值填充（删空层/加房后存储字段可能陈旧）
     const st = buildingStats.get(selectedBuilding.id);
-    setEditFloors(String(st?.floorCount ?? selectedBuilding.floors));
-    setEditRoomsPerFloor(String(st?.roomsPerFloor ?? selectedBuilding.roomsPerFloor));
+    const fStr = String(st?.floorCount ?? selectedBuilding.floors);
+    const rStr = String(st?.roomsPerFloor ?? selectedBuilding.roomsPerFloor);
+    setEditFloors(fStr);
+    setEditRoomsPerFloor(rStr);
+    setEditInitial({ floors: fStr, rpf: rStr });
     setActionModalVisible(false);
     setTimeout(() => setEditModalVisible(true), 300);
   };
@@ -430,8 +435,11 @@ export default function HomeScreen() {
     }
 
     const updated = { ...editingBuilding, name };
+    // 只发送真正改动的字段：未改的传 undefined，服务端就不会动对应房间（修复"只改层数误删各层尾部房间"）
+    const floorsArg = editFloors !== editInitial.floors ? floors : undefined;
+    const rpfArg = editRoomsPerFloor !== editInitial.rpf ? roomsPerFloor : undefined;
     try {
-      await StorageService.updateBuilding(updated, floors, roomsPerFloor);
+      await StorageService.updateBuilding(updated, floorsArg, rpfArg);
     } catch (e) {
       // C 策略：缩减时被波及房间有租客 → 服务端 409
       if (e instanceof ApiError) {
