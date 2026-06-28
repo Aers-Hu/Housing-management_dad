@@ -224,6 +224,10 @@ class ApiClient:
     def update_building(self, bid, fields):
         return self._request("PUT", f"/buildings/{bid}", fields)["building"]
 
+    def add_floor(self, bid, count):
+        """在楼房最高层之上新增一层，count 为该层房间数。"""
+        return self._request("POST", f"/buildings/{bid}/floors", {"count": count})["building"]
+
     def delete_building(self, bid):
         self._request("DELETE", f"/buildings/{bid}")
 

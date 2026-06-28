@@ -294,6 +294,46 @@ def migrate_all_data(data):
 
 
 # ============================================================
+# 楼层信息动态推导（统一以真实房间列表为准，不读 floors/rooms_per_floor 字段）
+# ============================================================
+def room_floor(r):
+    """取房间所属楼层：优先 _floor，回退到 id 前缀（如 "0101" -> 1）。"""
+    f = r.get("_floor", 0)
+    if f:
+        return f
+    rid = str(r.get("id", ""))
+    if len(rid) >= 2 and rid[:2].isdigit():
+        return int(rid[:2])
+    return 0
+
+
+def derive_floor_list(rooms):
+    """返回有房间的楼层号列表（升序、去重）。删空的楼层自然不在其中。"""
+    return sorted({room_floor(r) for r in rooms if room_floor(r) > 0})
+
+
+def derive_floor_count(rooms):
+    """真实层数 = 有房间的不同楼层个数。"""
+    return len(derive_floor_list(rooms))
+
+
+def derive_rooms_per_floor(rooms):
+    """
+    每层房间数：各有房间楼层的间数若全相同 -> 返回该数字；不同 -> 返回 None（调用方据此隐藏该项）。
+    """
+    floors = derive_floor_list(rooms)
+    if not floors:
+        return None
+    counts = {}
+    for r in rooms:
+        f = room_floor(r)
+        if f > 0:
+            counts[f] = counts.get(f, 0) + 1
+    vals = set(counts.values())
+    return next(iter(vals)) if len(vals) == 1 else None
+
+
+# ============================================================
 # 组件
 # ============================================================
 class RoundedBtn(tk.Canvas):
@@ -586,6 +626,21 @@ class DataStore:
         self._write_cache()
         return pb
 
+    def add_floor(self, building_idx, count):
+        """在楼房最高层之上新增一层空房（count 间），并重载该楼。"""
+        if building_idx < 0 or building_idx >= len(self._buildings):
+            raise ValueError("楼房不存在")
+        b = self._buildings[building_idx]
+        bid = b["id"]
+        self.api.add_floor(bid, count)
+        # 重载该楼，保持本地结构与服务器一致
+        detail = self.api.get_building(bid)
+        pb = server_building_to_py(detail["building"], detail["rooms"])
+        self._buildings[building_idx] = pb
+        self._snapshots[bid] = copy.deepcopy(pb)
+        self._write_cache()
+        return pb
+
     def find(self, bid):
         for i, b in enumerate(self._buildings):
             if b.get("id") == bid: return i, b
@@ -669,7 +724,7 @@ class BuildingDialog(tk.Toplevel):
         tk.Label(main_content, text="层数", font=FONT_BODY,
                  fg=C["text_secondary"], bg=C["bg"]).pack(anchor=tk.W, padx=pad_x, pady=(14, 2))
         f1 = tk.Frame(main_content, bg=C["bg"]); f1.pack(fill=tk.X, padx=pad_x)
-        self.floors_var = tk.IntVar(value=self.building["floors"] if self.building else 5)
+        self.floors_var = tk.IntVar(value=(derive_floor_count(self.building.get("rooms", [])) or self.building.get("floors", 5)) if self.building else 5)
         tk.Scale(f1, from_=1, to=30, orient=tk.HORIZONTAL,
                  variable=self.floors_var, bg=C["bg"],
                  troughcolor=C["border"], activebackground=C["primary"],
@@ -684,7 +739,7 @@ class BuildingDialog(tk.Toplevel):
         f2 = tk.Frame(main_content, bg=C["bg"]); f2.pack(fill=tk.X, padx=pad_x)
         # 仅允许输入数字
         vcmd_rooms = (self.register(lambda p: p == "" or p.isdigit()), '%P')
-        self.rooms_var = tk.StringVar(value=str(self.building["rooms_per_floor"] if self.building else 4))
+        self.rooms_var = tk.StringVar(value=str((derive_rooms_per_floor(self.building.get("rooms", [])) or self.building.get("rooms_per_floor", 4)) if self.building else 4))
         tk.Entry(f2, textvariable=self.rooms_var, font=FONT_BODY,
                  relief=tk.FLAT, bd=0, bg=C["card"], fg=C["text"],
                  insertbackground=C["primary"], width=8,
@@ -693,6 +748,12 @@ class BuildingDialog(tk.Toplevel):
                  validate='key', validatecommand=vcmd_rooms).pack(side=tk.LEFT, ipady=6)
         tk.Label(f2, text=" 间/层", font=FONT_SMALL,
                  fg=C["text_secondary"], bg=C["bg"]).pack(side=tk.LEFT)
+
+        if self.building:
+            tk.Label(main_content,
+                     text="⚠️ 修改层数/每层户数会把所有楼层重整为统一间数；缩减时若被波及的房间有租客将被拒绝。\n日常增减建议用楼层页的「+ 添加楼层」「+ 房间」及删除房间。",
+                     font=FONT_SMALL, fg=C["warning"], bg=C["bg"],
+                     justify=tk.LEFT).pack(anchor=tk.W, padx=pad_x, pady=(6, 0))
 
         # ---- 修改楼层号（仅编辑模式） ----
         self._floor_labels_frame = tk.Frame(main_content, bg=C["bg"])
@@ -2594,11 +2655,15 @@ class App(tk.Tk):
                           bg=C["card"], fg=clr, activebackground=C["card_hover"],
                           cursor="hand2", command=cmd).pack(side=tk.LEFT, padx=2)
         r2 = tk.Frame(inn, bg=C["card"]); r2.pack(fill=tk.X, pady=(10,8))
-        fl, rpf = b.get("floors",1), b.get("rooms_per_floor",1)
-        total = fl * rpf
-        occ = sum(1 for r in b.get("rooms",[]) if r.get("occupied"))
+        rooms = b.get("rooms", [])
+        fl = derive_floor_count(rooms)
+        rpf = derive_rooms_per_floor(rooms)
+        total = len(rooms)
+        occ = sum(1 for r in rooms if r.get("occupied"))
         pct = int(occ/total*100) if total>0 else 0
-        for txt in [f"📐 {fl}层 × {rpf}户", f"🚪 共{total}间", f"👤 入住{occ}间 ({pct}%)"]:
+        # 每层房间数：各层一致才显示，否则隐藏该项
+        rpf_text = f"📐 {fl}层 × {rpf}户" if rpf is not None else f"📐 {fl}层"
+        for txt in [rpf_text, f"🚪 共{total}间", f"👤 入住{occ}间 ({pct}%)"]:
             tk.Label(r2, text=txt, font=FONT_SMALL,
                      fg=C["text_secondary"], bg=C["card"]).pack(side=tk.LEFT, padx=(0,16))
         bar = tk.Frame(inn, bg=C["divider"], height=4); bar.pack(fill=tk.X, pady=(2,12))
@@ -2621,8 +2686,22 @@ class App(tk.Tk):
 
     def _edit_bld(self, b):
         idx = self.dm.find(b["id"])[0]
-        if idx >= 0:
-            BuildingDialog(self, lambda upd: (self.dm.update(idx, upd), self._show_home()), b)
+        if idx < 0:
+            return
+
+        def on_save(upd):
+            try:
+                self.dm.update(idx, upd)
+            except ApiError as e:
+                # C 策略：缩减时被波及房间有租客 → 服务端 409，提示后中止
+                messagebox.showerror("无法修改", e.message)
+                return
+            except Exception as e:
+                messagebox.showerror("错误", f"保存失败：{e}")
+                return
+            self._show_home()
+
+        BuildingDialog(self, on_save, b)
 
     def _del_bld(self, b):
         if messagebox.askyesno("确认删除", f"确定删除「{b['name']}」？\n此操作不可撤销！"):
@@ -2647,12 +2726,13 @@ class App(tk.Tk):
                  fg=C["text"], bg=C["topbar"]).pack(side=tk.LEFT, pady=14)
 
         rooms = building.get("rooms", [])
-        floors = building.get("floors", 1)
-        rpf = building.get("rooms_per_floor", 1)
+        fl = derive_floor_count(rooms)
+        rpf = derive_rooms_per_floor(rooms)
         total = len(rooms)
         occ = sum(1 for r in rooms if r.get("occupied"))
 
-        tk.Label(bar, text=f"  {floors}层 · {rpf}户/层 · {total}间 · 入住{occ}间",
+        rpf_text = f"{rpf}户/层 · " if rpf is not None else ""
+        tk.Label(bar, text=f"  {fl}层 · {rpf_text}{total}间 · 入住{occ}间",
                  font=FONT_SMALL, fg=C["text_secondary"],
                  bg=C["topbar"]).pack(side=tk.LEFT, padx=10, pady=18)
 
@@ -2677,8 +2757,21 @@ class App(tk.Tk):
                      fg=C["text_secondary"], bg=C["bg"]).pack(side=tk.LEFT)
 
         floor_labels = building.get("floor_labels", {})
-        for fn in range(1, floors+1):
+        # 遍历真实存在房间的楼层（删空的层自动消失，不再用 range(1, floors+1)）
+        for fn in derive_floor_list(rooms):
             self._draw_floor_hscroll(ct, building, fn, rpf, rooms, floor_labels)
+
+        # ---- 添加楼层按钮 ----
+        perm = building.get("_permission", "owner")
+        if perm != "read" and not self.dm.offline:
+            add_floor_frame = tk.Frame(ct, bg=C["bg"])
+            add_floor_frame.pack(fill=tk.X, padx=30, pady=(8, 20))
+            RoundedBtn(add_floor_frame, "+ 添加楼层",
+                       command=lambda bb=building: self._on_add_floor(bb),
+                       bg=C["primary"], fg=C["white"],
+                       font=FONT_BTN, width=120, height=34,
+                       canvas_bg=C["bg"]).pack(side=tk.LEFT)
+
         bind_scroll(ct, cv)
 
     def _draw_floor_hscroll(self, parent, building, floor_num, rpf, all_rooms, floor_labels):
@@ -2703,14 +2796,26 @@ class App(tk.Tk):
         # 使用自定义楼层标签
         custom_label = floor_labels.get(str(floor_num), "")
         display_name = custom_label if custom_label else f"第 {floor_num} 层"
-        tk.Label(fh, text=display_name, font=FONT_HEADER,
-                 fg=C["text"], bg=C["bg"]).pack(side=tk.LEFT, padx=10)
+        name_lbl = tk.Label(fh, text=display_name, font=FONT_HEADER,
+                            fg=C["text"], bg=C["bg"])
+        name_lbl.pack(side=tk.LEFT, padx=10)
+
+        # 双击楼层标题/徽章 → 修改该层显示标签（只读楼房不可改）
+        perm = building.get("_permission", "owner")
+        if perm != "read":
+            for w in (fl_label, name_lbl):
+                w.config(cursor="hand2")
+                w.bind("<Double-Button-1>",
+                       lambda e, f=floor_num: self._on_edit_floor_label(building, f))
+            for child in fl_label.winfo_children():
+                child.config(cursor="hand2")
+                child.bind("<Double-Button-1>",
+                           lambda e, f=floor_num: self._on_edit_floor_label(building, f))
 
         tk.Label(fh, text=f"入住 {f_occ}/{len(f_rooms)}",
                  font=FONT_SMALL, fg=C["text_secondary"], bg=C["bg"]).pack(side=tk.LEFT, padx=10)
 
         # ---- 添加房间按钮 ----
-        perm = building.get("_permission", "owner")
         if perm != "read" and not self.dm.offline:
             btn_frame = tk.Frame(fh, bg=C["bg"])
             btn_frame.pack(side=tk.RIGHT, padx=(0, 0))
@@ -2846,6 +2951,61 @@ class App(tk.Tk):
             messagebox.showinfo("完成", f"已删除 {display} 房间")
         except Exception as e:
             messagebox.showerror("错误", f"删除房间失败：{e}")
+
+    def _on_add_floor(self, building):
+        """添加一层：各层房间数一致则沿用，否则询问间数。"""
+        if self.dm.offline:
+            messagebox.showwarning("离线", "离线模式下无法添加楼层，请先连接服务器。")
+            return
+        rooms = building.get("rooms", [])
+        rpf = derive_rooms_per_floor(rooms)
+        if rpf is None:
+            # 各层房间数不一致，让用户指定新层间数
+            count = simpledialog.askinteger(
+                "添加楼层",
+                f"在 {building['name']} 顶层之上添加一层\n\n各层房间数不一致，请输入新层的房间数：",
+                parent=self, minvalue=1, maxvalue=50)
+            if not count:
+                return
+        else:
+            count = rpf
+        try:
+            i, _ = self.dm.find(building["id"])
+            self.dm.add_floor(i, count)
+            self._show_room_grid(self.dm.buildings[i])
+            messagebox.showinfo("完成", f"已添加一层（{count} 间空房）")
+        except ApiError as e:
+            messagebox.showerror("添加失败", e.message)
+        except Exception as e:
+            messagebox.showerror("错误", f"添加楼层失败：{e}")
+
+    def _on_edit_floor_label(self, building, floor_num):
+        """双击楼层标题：修改该层显示标签（如"停车层"），复用 floor_labels。"""
+        if self.dm.offline:
+            messagebox.showwarning("离线", "离线模式下无法修改楼层标签，请先连接服务器。")
+            return
+        labels = dict(building.get("floor_labels", {}))
+        current = labels.get(str(floor_num), "")
+        new_label = simpledialog.askstring(
+            "修改楼层显示",
+            f"第 {floor_num} 层的显示名称（留空恢复默认；可填\"停车层\"\"B1\"等）：",
+            initialvalue=current, parent=self)
+        if new_label is None:
+            return  # 用户取消
+        new_label = new_label.strip()
+        if new_label:
+            labels[str(floor_num)] = new_label
+        else:
+            labels.pop(str(floor_num), None)
+        try:
+            i, bld = self.dm.find(building["id"])
+            bld["floor_labels"] = labels
+            self.dm.update(i, bld)
+            self._show_room_grid(self.dm.buildings[i])
+        except ApiError as e:
+            messagebox.showerror("修改失败", e.message)
+        except Exception as e:
+            messagebox.showerror("错误", f"修改楼层标签失败：{e}")
 
     def _open_room(self, room, building):
         def on_save(upd):

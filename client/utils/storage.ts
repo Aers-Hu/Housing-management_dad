@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Building, Room, generateId, generateBuildingRooms } from './roomTypes';
-import { apiRequest, NetworkError } from './api';
+import { Building, Room, generateId, generateBuildingRooms, rebuildRoomsCStrategy, generateRoomNumber, deriveFloorList } from './roomTypes';
+import { apiRequest, NetworkError, ApiError } from './api';
 import { enqueueRoomUpdate, flushOutbox } from './sync';
 import { isOnline, scheduleProbe } from './netstatus';
 
@@ -187,11 +187,20 @@ async function updateBuildingLocal(
   if (idx !== -1) list[idx] = merged; else list.push(merged);
   await cacheSetBuildings(list);
 
-  // 结构变化时重算房间：保留 floor/number 命中的旧房间，缺的补新房
+  // 结构变化时按 C 策略重算房间：超范围房间有租客则拒绝（抛 ApiError 409，与在线一致）
   if (newFloors !== undefined || newRoomsPerFloor !== undefined) {
     const existing = await cacheGetRooms(building.id);
-    const rebuilt = generateBuildingRooms(merged, existing);
-    await cacheSetRooms(building.id, rebuilt);
+    const res = rebuildRoomsCStrategy(
+      building.id,
+      existing,
+      merged.floors,
+      merged.roomsPerFloor
+    );
+    if (res.occupiedFloors) {
+      const floorsText = res.occupiedFloors.join('、');
+      throw new ApiError(409, `第 ${floorsText} 层仍有租客，请先处理租客（退租或转移）后再缩减楼层/房间数`);
+    }
+    await cacheSetRooms(building.id, res.rooms!);
   }
 }
 
@@ -207,6 +216,39 @@ async function deleteBuilding(buildingId: string): Promise<void> {
       await removeLocal();
     },
     removeLocal,
+  );
+}
+
+// 添加一层：在最高层之上新增一层空房（count 间）
+async function addFloor(buildingId: string, count: number): Promise<void> {
+  const addLocal = async () => {
+    const rooms = await cacheGetRooms(buildingId);
+    const floors = deriveFloorList(rooms);
+    const maxFloor = floors.length > 0 ? floors[floors.length - 1] : 0;
+    const newFloor = maxFloor + 1;
+    const n = Math.max(1, Math.floor(count));
+    for (let i = 0; i < n; i++) {
+      rooms.push({
+        id: generateId('room'),
+        buildingId,
+        floor: newFloor,
+        number: generateRoomNumber(newFloor, i, n),
+        name: '',
+        isOccupied: false,
+        tenantName: '',
+        monthlyRent: 0,
+      });
+    }
+    await cacheSetRooms(buildingId, rooms);
+  };
+  return onlineFirst(
+    async () => {
+      await apiRequest(`/buildings/${buildingId}/floors`, { method: 'POST', body: { count } });
+      // 刷新该楼房间缓存
+      const detail = await apiRequest<{ rooms: Room[] }>(`/buildings/${buildingId}`);
+      await cacheSetRooms(buildingId, detail.rooms);
+    },
+    addLocal,
   );
 }
 
@@ -386,6 +428,7 @@ export const StorageService = {
   addBuilding,
   updateBuilding,
   deleteBuilding,
+  addFloor,
   // Rooms
   loadRooms,
   saveRoomsForBuilding,

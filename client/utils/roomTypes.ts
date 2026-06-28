@@ -84,6 +84,67 @@ export function generateBuildingRooms(building: Building, existingRooms?: Room[]
   return rooms;
 }
 
+// C 策略重算房间（与服务端 repo.ts Buildings.update 对齐）：
+//   超出新 floors/roomsPerFloor 范围的房间为「待删」；若其中有租客 → 返回 occupiedFloors（拒绝）；
+//   否则删除超出的空房并按每层数量补齐。返回 { rooms } 表示成功。
+export function rebuildRoomsCStrategy(
+  buildingId: string,
+  existingRooms: Room[],
+  newFloors: number,
+  newRoomsPerFloor: number
+): { rooms?: Room[]; occupiedFloors?: number[] } {
+  // 按楼层分组（每层按 number 数值升序）
+  const byFloor = new Map<number, Room[]>();
+  for (const r of existingRooms) {
+    const arr = byFloor.get(r.floor) ?? [];
+    arr.push(r);
+    byFloor.set(r.floor, arr);
+  }
+  for (const arr of byFloor.values()) {
+    arr.sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+  }
+
+  // 待删房间：整层超范围，或每层超出 roomsPerFloor 的尾部
+  const toDelete: Room[] = [];
+  for (const [floor, arr] of byFloor) {
+    if (floor > newFloors) toDelete.push(...arr);
+    else if (arr.length > newRoomsPerFloor) toDelete.push(...arr.slice(newRoomsPerFloor));
+  }
+
+  // C 策略：待删房间有租客 → 拒绝
+  const occupiedFloors = [...new Set(toDelete.filter((r) => r.isOccupied).map((r) => r.floor))].sort((a, b) => a - b);
+  if (occupiedFloors.length > 0) return { occupiedFloors };
+
+  const deletedIds = new Set(toDelete.map((r) => r.id));
+  const result: Room[] = existingRooms.filter((r) => !deletedIds.has(r.id));
+
+  // 按每层数量补齐到 roomsPerFloor
+  for (let floor = 1; floor <= newFloors; floor++) {
+    const kept = (byFloor.get(floor) ?? []).filter((r) => !deletedIds.has(r.id));
+    const usedNumbers = new Set(kept.map((r) => r.number));
+    let idx = kept.length;
+    while (usedNumbers.size < newRoomsPerFloor) {
+      let number = generateRoomNumber(floor, idx, newRoomsPerFloor);
+      while (usedNumbers.has(number)) {
+        idx++;
+        number = generateRoomNumber(floor, idx, newRoomsPerFloor);
+      }
+      usedNumbers.add(number);
+      result.push({
+        id: generateId('room'),
+        buildingId,
+        floor,
+        number,
+        name: '',
+        isOccupied: false,
+        tenantName: '',
+        monthlyRent: 0,
+      });
+    }
+  }
+  return { rooms: result };
+}
+
 // 按楼层分组
 export function groupRoomsByFloor(rooms: Room[]): Map<number, Room[]> {
   const grouped = new Map<number, Room[]>();
@@ -128,6 +189,31 @@ export function getBuildingStats(rooms: Room[], buildingId: string) {
   const total = buildingRooms.length;
   const occupied = buildingRooms.filter(r => r.isOccupied).length;
   return { total, occupied, vacant: total - occupied };
+}
+
+// ============================================================
+// 楼层信息动态推导（统一以真实房间列表为准，不读 building.floors/roomsPerFloor）
+// ============================================================
+
+// 有房间的楼层号列表（升序去重）。删空的楼层自然不在其中。
+export function deriveFloorList(rooms: Room[]): number[] {
+  return [...new Set(rooms.map(r => r.floor).filter(f => f > 0))].sort((a, b) => a - b);
+}
+
+// 真实层数 = 有房间的不同楼层个数
+export function deriveFloorCount(rooms: Room[]): number {
+  return deriveFloorList(rooms).length;
+}
+
+// 每层房间数：各有房间楼层的间数若全相同→返回该数字；不同→返回 null（调用方据此隐藏）
+export function deriveRoomsPerFloor(rooms: Room[]): number | null {
+  const counts = new Map<number, number>();
+  for (const r of rooms) {
+    if (r.floor > 0) counts.set(r.floor, (counts.get(r.floor) ?? 0) + 1);
+  }
+  if (counts.size === 0) return null;
+  const vals = new Set(counts.values());
+  return vals.size === 1 ? [...vals][0] : null;
 }
 
 // 获取楼层的显示标签（优先使用自定义的 floorLabels，否则用内部楼层号）

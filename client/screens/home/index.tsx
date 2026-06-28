@@ -15,7 +15,7 @@ import {
 import { Screen } from '@/components/Screen';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { StorageService } from '@/utils/storage';
-import { Building, Room, getBuildingStats } from '@/utils/roomTypes';
+import { Building, Room, getBuildingStats, deriveFloorCount, deriveRoomsPerFloor } from '@/utils/roomTypes';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { FontAwesome6 } from '@expo/vector-icons';
@@ -44,7 +44,7 @@ export default function HomeScreen() {
   const [granteeVisible, setGranteeVisible] = useState(false);
   const [granteeList, setGranteeList] = useState<GranteeItem[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
-  const [buildingStats, setBuildingStats] = useState<Map<string, { total: number; occupied: number; vacant: number }>>(new Map());
+  const [buildingStats, setBuildingStats] = useState<Map<string, { total: number; occupied: number; vacant: number; floorCount: number; roomsPerFloor: number | null }>>(new Map());
   const [refreshing, setRefreshing] = useState(false);
 
   // 添加楼房弹窗
@@ -68,10 +68,14 @@ export default function HomeScreen() {
     const blds = await StorageService.loadBuildings();
     setBuildings(blds);
 
-    const stats = new Map<string, { total: number; occupied: number; vacant: number }>();
+    const stats = new Map<string, { total: number; occupied: number; vacant: number; floorCount: number; roomsPerFloor: number | null }>();
     for (const b of blds) {
       const rooms = await StorageService.loadRooms(b.id);
-      stats.set(b.id, getBuildingStats(rooms, b.id));
+      stats.set(b.id, {
+        ...getBuildingStats(rooms, b.id),
+        floorCount: deriveFloorCount(rooms),
+        roomsPerFloor: deriveRoomsPerFloor(rooms),
+      });
     }
     setBuildingStats(stats);
 
@@ -332,8 +336,10 @@ export default function HomeScreen() {
     if (!selectedBuilding) return;
     setEditingBuilding(selectedBuilding);
     setEditName(selectedBuilding.name);
-    setEditFloors(String(selectedBuilding.floors));
-    setEditRoomsPerFloor(String(selectedBuilding.roomsPerFloor));
+    // 用真实推导值填充（删空层/加房后存储字段可能陈旧）
+    const st = buildingStats.get(selectedBuilding.id);
+    setEditFloors(String(st?.floorCount ?? selectedBuilding.floors));
+    setEditRoomsPerFloor(String(st?.roomsPerFloor ?? selectedBuilding.roomsPerFloor));
     setActionModalVisible(false);
     setTimeout(() => setEditModalVisible(true), 300);
   };
@@ -424,7 +430,21 @@ export default function HomeScreen() {
     }
 
     const updated = { ...editingBuilding, name };
-    await StorageService.updateBuilding(updated, floors, roomsPerFloor);
+    try {
+      await StorageService.updateBuilding(updated, floors, roomsPerFloor);
+    } catch (e) {
+      // C 策略：缩减时被波及房间有租客 → 服务端 409
+      if (e instanceof ApiError) {
+        Alert.alert('无法修改', e.message);
+        return;
+      }
+      if (e instanceof NetworkError) {
+        Toast.show({ type: 'error', text1: '连不上服务器' });
+        return;
+      }
+      Toast.show({ type: 'error', text1: '保存失败' });
+      return;
+    }
     setEditModalVisible(false);
     setEditingBuilding(null);
     await loadData();
@@ -533,7 +553,12 @@ export default function HomeScreen() {
               <View style={styles.buildingInfo}>
                 <Text style={styles.buildingName}>{building.name}</Text>
                 <Text style={styles.buildingConfig}>
-                  {building.floors} 层 · 每层 {building.roomsPerFloor} 间
+                  {(() => {
+                    const st = buildingStats.get(building.id);
+                    const fc = st?.floorCount ?? 0;
+                    const rpf = st?.roomsPerFloor;
+                    return rpf != null ? `${fc} 层 · 每层 ${rpf} 间` : `${fc} 层`;
+                  })()}
                 </Text>
               </View>
               <Text style={styles.buildingArrow}>›</Text>
@@ -678,6 +703,9 @@ export default function HomeScreen() {
             >
               <View style={styles.formSheet}>
                 <Text style={styles.formTitle}>修改楼房</Text>
+                <Text style={{ fontSize: 12, color: '#E17055', marginBottom: 12, lineHeight: 17 }}>
+                  {'注意：修改层数/每层房间数会把所有楼层重整为统一间数；缩减时若被波及的房间有租客将被拒绝。日常增减建议进入楼房后用「+ 添加楼层」「+ 房间」及删除房间。'}
+                </Text>
 
                 <Text style={styles.inputLabel}>楼房名称</Text>
                 <TextInput

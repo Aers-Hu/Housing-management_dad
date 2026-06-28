@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,10 +15,11 @@ import {
 import { Screen } from '@/components/Screen';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { StorageService } from '@/utils/storage';
-import { Building, Room, groupRoomsByFloor, getBuildingStats, getFloorLabel, generateRoomNumber } from '@/utils/roomTypes';
+import { Building, Room, groupRoomsByFloor, getBuildingStats, getFloorLabel, generateRoomNumber, deriveFloorCount, deriveRoomsPerFloor, deriveFloorList } from '@/utils/roomTypes';
 import { useFocusEffect } from 'expo-router';
 import { FontAwesome6 } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+import { NetworkError, ApiError } from '@/utils/api';
 
 export default function BuildingScreen() {
   const router = useSafeRouter();
@@ -52,6 +53,15 @@ export default function BuildingScreen() {
   // 批量命名房间弹窗
   const [batchModalVisible, setBatchModalVisible] = useState(false);
   const [batchNameDraft, setBatchNameDraft] = useState<Record<string, string>>({});
+
+  // 单层标签编辑（双击楼层标题触发）
+  const [singleFloorVisible, setSingleFloorVisible] = useState(false);
+  const [editingFloor, setEditingFloor] = useState(0);
+  const [singleFloorLabel, setSingleFloorLabel] = useState('');
+  const lastTapRef = useRef<{ floor: number; time: number }>({ floor: 0, time: 0 });
+
+  // 添加楼层中标志（防重复点击）
+  const [addingFloor, setAddingFloor] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!buildingId) return;
@@ -193,7 +203,8 @@ export default function BuildingScreen() {
   const openFloorLabelModal = () => {
     if (!building) return;
     const draft: Record<number, string> = {};
-    for (let f = 1; f <= building.floors; f++) {
+    // 用真实存在房间的楼层（删空层不再出现）
+    for (const f of deriveFloorList(rooms)) {
       draft[f] = getFloorLabel(building, f);
     }
     setFloorLabelDraft(draft);
@@ -221,6 +232,76 @@ export default function BuildingScreen() {
     await StorageService.updateBuilding(updated);
     setFloorLabelModalVisible(false);
     await loadData();
+  };
+
+  // 双击楼层标题 → 编辑该层标签（300ms 内连点两次）
+  const onFloorTitleTap = (floor: number) => {
+    if (readOnly) return;
+    const now = Date.now();
+    const last = lastTapRef.current;
+    if (last.floor === floor && now - last.time < 300) {
+      lastTapRef.current = { floor: 0, time: 0 };
+      setEditingFloor(floor);
+      setSingleFloorLabel(getFloorLabel(building, floor));
+      setSingleFloorVisible(true);
+    } else {
+      lastTapRef.current = { floor, time: now };
+    }
+  };
+
+  // 保存单层标签
+  const handleSaveSingleFloor = async () => {
+    if (!building) return;
+    const labels: Record<number, string> = { ...(building.floorLabels ?? {}) };
+    const trimmed = singleFloorLabel.trim();
+    if (trimmed && trimmed !== String(editingFloor)) {
+      labels[editingFloor] = trimmed;
+    } else {
+      delete labels[editingFloor]; // 留空或与默认相同 → 恢复默认
+    }
+    const updated: Building = { ...building, floorLabels: labels };
+    try {
+      await StorageService.updateBuilding(updated);
+    } catch (e) {
+      Toast.show({ type: 'error', text1: e instanceof NetworkError ? '连不上服务器' : '保存失败' });
+      return;
+    }
+    setSingleFloorVisible(false);
+    await loadData();
+  };
+
+  // 添加楼层：各层间数一致则沿用，否则提示去编辑楼房设置
+  const handleAddFloor = async () => {
+    if (!buildingId || readOnly || addingFloor) return;
+    const rpf = deriveRoomsPerFloor(rooms);
+    if (rpf == null) {
+      Alert.alert(
+        '每层房间数不一致',
+        '当前各层房间数不同，无法确定新层间数。请在新层创建后用「+ 房间」逐间添加，或先统一各层房间数。',
+        [
+          { text: '取消', style: 'cancel' },
+          { text: '加1间空层', onPress: () => doAddFloor(1) },
+        ]
+      );
+      return;
+    }
+    doAddFloor(rpf);
+  };
+
+  const doAddFloor = async (count: number) => {
+    if (!buildingId) return;
+    setAddingFloor(true);
+    try {
+      await StorageService.addFloor(buildingId, count);
+      await loadData();
+      Toast.show({ type: 'success', text1: `已添加一层（${count} 间空房）` });
+    } catch (e) {
+      if (e instanceof NetworkError) Toast.show({ type: 'error', text1: '连不上服务器' });
+      else if (e instanceof ApiError) Alert.alert('添加失败', e.message);
+      else Toast.show({ type: 'error', text1: '添加楼层失败' });
+    } finally {
+      setAddingFloor(false);
+    }
   };
 
   // 打开批量命名弹窗
@@ -284,7 +365,12 @@ export default function BuildingScreen() {
         <View style={styles.buildingInfoCard}>
           <Text style={styles.buildingName}>{building.name}</Text>
           <Text style={styles.buildingConfig}>
-            {building.floors} 层 · 每层 {building.roomsPerFloor} 间 · 共 {stats.total} 间
+            {(() => {
+              const fc = deriveFloorCount(rooms);
+              const rpf = deriveRoomsPerFloor(rooms);
+              const base = rpf != null ? `${fc} 层 · 每层 ${rpf} 间` : `${fc} 层`;
+              return `${base} · 共 ${stats.total} 间`;
+            })()}
           </Text>
           {readOnly && (
             <View style={styles.readOnlyBadge}>
@@ -315,9 +401,13 @@ export default function BuildingScreen() {
           return (
             <View key={floor} style={styles.floorSection}>
               <View style={styles.floorHeader}>
-                <View style={styles.floorBadge}>
+                <TouchableOpacity
+                  style={styles.floorBadge}
+                  onPress={() => onFloorTitleTap(floor)}
+                  activeOpacity={readOnly ? 1 : 0.6}
+                >
                   <Text style={styles.floorBadgeText}>{getFloorLabel(building, floor)} 楼</Text>
-                </View>
+                </TouchableOpacity>
                 <Text style={styles.floorInfo}>
                   {floorRooms.filter(r => r.isOccupied).length}/{floorRooms.length} 已入住
                 </Text>
@@ -376,6 +466,20 @@ export default function BuildingScreen() {
             </View>
           );
         })}
+
+        {!readOnly && (
+          <TouchableOpacity
+            style={styles.addFloorButton}
+            onPress={handleAddFloor}
+            activeOpacity={0.8}
+            disabled={addingFloor}
+          >
+            <FontAwesome6 name="layer-group" size={14} color="#6C63FF" />
+            <Text style={styles.addFloorButtonText}>
+              {addingFloor ? '添加中…' : '+ 添加楼层'}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         <View style={styles.bottomPadding} />
       </ScrollView>
@@ -622,6 +726,41 @@ export default function BuildingScreen() {
           </KeyboardAvoidingView>
         </View>
       </Modal>
+
+      {/* ========== 单层标签编辑 Modal（双击楼层标题触发）========== */}
+      <Modal
+        visible={singleFloorVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSingleFloorVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <View style={styles.nameModalContent}>
+              <Text style={styles.nameModalTitle}>修改第 {editingFloor} 层显示</Text>
+              <Text style={{ fontSize: 13, color: '#636E72', marginBottom: 12, lineHeight: 18 }}>
+                {'可填「停车层」「B1」等文字；留空恢复默认编号'}
+              </Text>
+              <TextInput
+                style={styles.nameInput}
+                value={singleFloorLabel}
+                onChangeText={setSingleFloorLabel}
+                placeholder={`第 ${editingFloor} 层`}
+                placeholderTextColor="#B2BEC3"
+                autoFocus
+              />
+              <View style={styles.nameModalButtons}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setSingleFloorVisible(false)}>
+                  <Text style={styles.cancelBtnText}>取消</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveSingleFloor}>
+                  <Text style={styles.saveBtnText}>保存</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -632,6 +771,24 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
+  },
+  addFloorButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    marginTop: 8,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#6C63FF',
+    borderStyle: 'dashed',
+    backgroundColor: '#F8F7FF',
+  },
+  addFloorButtonText: {
+    fontSize: 15,
+    color: '#6C63FF',
+    fontWeight: '700',
   },
   loadingContainer: {
     flex: 1,

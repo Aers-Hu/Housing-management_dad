@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { Buildings, Rooms, Users, AccessRequests, AccountGrants, PendingChanges } from '../db/repo.ts';
+import { Buildings, Rooms, Users, AccessRequests, AccountGrants, PendingChanges, RoomsOccupiedError } from '../db/repo.ts';
 import { getUserId } from '../middleware/auth.ts';
 import { isAdminUser } from '../auth/admin.ts';
 import type { Room, RentRecord, PendingDiffItem, PendingChange } from '../types.ts';
@@ -104,8 +104,35 @@ router.put('/buildings/:id', (req, res) => {
   if (level === 'read') return res.status(403).json({ error: '只读权限，不能修改' });
 
   const { name, floors, roomsPerFloor, floorLabels } = req.body ?? {};
-  const building = Buildings.update(req.params.id, { name, floors, roomsPerFloor, floorLabels });
-  res.json({ building });
+  try {
+    const building = Buildings.update(req.params.id, { name, floors, roomsPerFloor, floorLabels });
+    res.json({ building });
+  } catch (e) {
+    // C 策略：超出范围的房间有租客 → 拒绝缩减，返回 409 + 中文提示
+    if (e instanceof RoomsOccupiedError) {
+      const floorsText = e.occupiedFloors.join('、');
+      return res.status(409).json({
+        error: `第 ${floorsText} 层仍有租客，请先处理租客（退租或转移）后再缩减楼层/房间数`,
+        occupiedFloors: e.occupiedFloors,
+      });
+    }
+    throw e;
+  }
+});
+
+// 添加一层：在最高层之上新增一层空房
+router.post('/buildings/:id/floors', (req, res) => {
+  const userId = getUserId(req);
+  const level = Buildings.accessLevel(userId, req.params.id);
+  if (!level) return res.status(404).json({ error: '楼房不存在或无权访问' });
+  if (level === 'read') return res.status(403).json({ error: '只读权限，不能修改' });
+
+  const { count } = req.body ?? {};
+  if (typeof count !== 'number' || count < 1) {
+    return res.status(400).json({ error: '缺少有效的 count（每层房间数）' });
+  }
+  const building = Buildings.addFloor(req.params.id, count);
+  res.status(201).json({ building });
 });
 
 // 删除楼房（owner 或有写权限者；写=完全控制，含删楼）

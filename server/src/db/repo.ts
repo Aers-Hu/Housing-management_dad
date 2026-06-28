@@ -15,6 +15,17 @@ function generateRoomNumber(floor: number, index: number, roomsPerFloor: number)
   return `${floor}${padded}`;
 }
 
+// C 策略：减少楼层/每层房间数时，若被波及（超出新范围）的房间含租客，
+// 抛出此错误拒绝整个修改，由路由层捕获并返回 409 + 中文提示。
+export class RoomsOccupiedError extends Error {
+  occupiedFloors: number[];
+  constructor(occupiedFloors: number[]) {
+    super('超出范围的房间存在租客，无法缩减');
+    this.name = 'RoomsOccupiedError';
+    this.occupiedFloors = occupiedFloors;
+  }
+}
+
 // ============================================================
 // Users
 // ============================================================
@@ -117,23 +128,95 @@ export const Buildings = {
       `UPDATE buildings SET name = ?, floors = ?, rooms_per_floor = ?, floor_labels = ? WHERE id = ?`
     ).run(name, floors, roomsPerFloor, floorLabels ? JSON.stringify(floorLabels) : null, id);
 
-    // 楼层/每层数变化时，补齐缺失房间（保留已有房间数据，不删多余的以防误删租客）
+    // 楼层/每层数变化时，重算房间（C 策略）：
+    //   1. 先算出「新配置下应保留的房间集合」（按楼层分组，每层取前 roomsPerFloor 间）
+    //   2. 超出该集合的房间为「待删」；若其中任一间有租客 → 抛错拒绝整个修改（C 策略）
+    //   3. 全为空房才删除超出的房间，再补齐缺失的新房
     if (fields.floors !== undefined || fields.roomsPerFloor !== undefined) {
       const existingRooms = Rooms.listByBuilding(id);
-      const have = new Set(existingRooms.map((r) => `${r.floor}_${r.number}`));
+
+      // 按楼层分组（每层内按 number 升序，删多余时优先保留靠前的房间）
+      const byFloor = new Map<number, Room[]>();
+      for (const r of existingRooms) {
+        const arr = byFloor.get(r.floor) ?? [];
+        arr.push(r);
+        byFloor.set(r.floor, arr);
+      }
+      for (const arr of byFloor.values()) {
+        arr.sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+      }
+
+      // 找出「待删房间」：超出新楼层范围的整层，或每层超出 roomsPerFloor 的尾部
+      const toDelete: Room[] = [];
+      for (const [floor, arr] of byFloor) {
+        if (floor > floors) {
+          toDelete.push(...arr);           // 整层超范围
+        } else if (arr.length > roomsPerFloor) {
+          toDelete.push(...arr.slice(roomsPerFloor)); // 该层尾部超出的房间
+        }
+      }
+
+      // C 策略：待删房间里有租客 → 拒绝
+      const occupiedFloors = [...new Set(toDelete.filter((r) => r.isOccupied).map((r) => r.floor))];
+      if (occupiedFloors.length > 0) {
+        occupiedFloors.sort((a, b) => a - b);
+        throw new RoomsOccupiedError(occupiedFloors);
+      }
+
+      // 删除超出的空房
+      if (toDelete.length > 0) {
+        const delStmt = db.prepare('DELETE FROM rooms WHERE id = ?');
+        for (const r of toDelete) delStmt.run(r.id);
+      }
+
+      // 补齐：按「每层保留后的数量」补到 roomsPerFloor（不按号码匹配，
+      // 因为减少每层数时房间号位数会变，号码无法直接对应）。
+      const deletedIds = new Set(toDelete.map((r) => r.id));
       const insertRoom = db.prepare(
         `INSERT INTO rooms (id, building_id, floor, number, name, is_occupied, tenant_name, monthly_rent)
          VALUES (?, ?, ?, ?, '', 0, '', 0)`
       );
       for (let floor = 1; floor <= floors; floor++) {
-        for (let i = 0; i < roomsPerFloor; i++) {
-          const number = generateRoomNumber(floor, i, roomsPerFloor);
-          if (!have.has(`${floor}_${number}`)) {
-            insertRoom.run(genId('room'), id, floor, number);
+        const kept = (byFloor.get(floor) ?? []).filter((r) => !deletedIds.has(r.id));
+        const usedNumbers = new Set(kept.map((r) => r.number));
+        let idx = kept.length;
+        // 补到该层共有 roomsPerFloor 间（usedNumbers.size 即该层当前房间数）
+        while (usedNumbers.size < roomsPerFloor) {
+          let number = generateRoomNumber(floor, idx, roomsPerFloor);
+          while (usedNumbers.has(number)) {
+            idx++;
+            number = generateRoomNumber(floor, idx, roomsPerFloor);
           }
+          usedNumbers.add(number);
+          insertRoom.run(genId('room'), id, floor, number);
+          idx++;
         }
       }
     }
+    return this.findById(id);
+  },
+
+  // 添加一层：在当前最高楼层之上新增一层空房。
+  // count 为该层房间数；返回更新后的楼房。新层号 = 现有房间最高楼层 + 1（无房则用 floors+1）。
+  addFloor(id: string, count: number): Building | null {
+    const existing = this.findById(id);
+    if (!existing) return null;
+
+    const rooms = Rooms.listByBuilding(id);
+    const maxFloor = rooms.length > 0 ? Math.max(...rooms.map((r) => r.floor)) : existing.floors;
+    const newFloor = maxFloor + 1;
+    const n = Math.max(1, Math.floor(count));
+
+    const insertRoom = db.prepare(
+      `INSERT INTO rooms (id, building_id, floor, number, name, is_occupied, tenant_name, monthly_rent)
+       VALUES (?, ?, ?, ?, '', 0, '', 0)`
+    );
+    for (let i = 0; i < n; i++) {
+      insertRoom.run(genId('room'), id, newFloor, generateRoomNumber(newFloor, i, n));
+    }
+
+    // 同步 floors 字段（仅作记录，真实层数由房间动态推导）
+    db.prepare('UPDATE buildings SET floors = ? WHERE id = ?').run(newFloor, id);
     return this.findById(id);
   },
 
