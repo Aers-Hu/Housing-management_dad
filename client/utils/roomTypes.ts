@@ -214,6 +214,105 @@ export function getBuildingStats(rooms: Room[], buildingId: string) {
 }
 
 // ============================================================
+// 楼层增删（整体移位重编号，与服务端 repo.ts Buildings.deleteFloor/insertFloor 对齐）
+//   语义：楼层保持连续 1..N。删除/插入某层时，受影响的上方楼层整体移位，
+//   房间号随新楼层重新生成（如 401 → 501）。房间的 id/租客/名称/租金等全部保留，
+//   仅改 floor 与 number 两字段。floorLabels 跟随移位。
+// ============================================================
+
+// 重新生成某层全部房间的 number（保留原有顺序，按 number 数值升序排）
+function renumberRoomsOnFloor(floorRooms: Room[], floor: number): Room[] {
+  const sorted = [...floorRooms].sort((a, b) =>
+    a.number.localeCompare(b.number, undefined, { numeric: true })
+  );
+  return sorted.map((r, i) => ({
+    ...r,
+    floor,
+    number: generateRoomNumber(floor, i, sorted.length),
+  }));
+}
+
+// 楼层标签整体移位：把 >= fromFloor 的标签键加上 delta（delta 为 +1 插入 / -1 删除）
+// 删除时 fromFloor 那一层的标签先丢弃，再把上方下移。
+export function shiftFloorLabels(
+  labels: Record<number, string> | undefined,
+  fromFloor: number,
+  delta: number
+): Record<number, string> {
+  const result: Record<number, string> = {};
+  for (const [floorStr, label] of Object.entries(labels ?? {})) {
+    const floor = Number(floorStr);
+    if (delta < 0 && floor === fromFloor) continue; // 被删层的标签丢弃
+    const newFloor = floor >= fromFloor ? floor + delta : floor;
+    if (newFloor >= 1) result[newFloor] = label;
+  }
+  return result;
+}
+
+// 删除整层：返回新房间列表与新标签；若该层有租客则返回 occupied 标志（拒绝删除）
+export function buildDeleteFloor(
+  rooms: Room[],
+  labels: Record<number, string> | undefined,
+  targetFloor: number
+): { rooms?: Room[]; labels?: Record<number, string>; occupied?: boolean } {
+  const inTarget = rooms.filter((r) => r.floor === targetFloor);
+  if (inTarget.some((r) => r.isOccupied)) return { occupied: true };
+
+  const result: Room[] = [];
+  // 按楼层分组，删 targetFloor，上方（> targetFloor）整体下移一层并重编号
+  const byFloor = new Map<number, Room[]>();
+  for (const r of rooms) {
+    if (r.floor === targetFloor) continue;
+    const arr = byFloor.get(r.floor) ?? [];
+    arr.push(r);
+    byFloor.set(r.floor, arr);
+  }
+  for (const [floor, arr] of byFloor) {
+    const newFloor = floor > targetFloor ? floor - 1 : floor;
+    result.push(...renumberRoomsOnFloor(arr, newFloor));
+  }
+  return { rooms: result, labels: shiftFloorLabels(labels, targetFloor, -1) };
+}
+
+// 插入一层：在 newFloor 位置插入 count 间空房，>= newFloor 的原楼层整体上移并重编号。
+//   position 由调用方换算：向上(更高层)插在 targetFloor+1；向下(更低层)插在 targetFloor。
+export function buildInsertFloor(
+  buildingId: string,
+  rooms: Room[],
+  labels: Record<number, string> | undefined,
+  newFloor: number,
+  count: number
+): { rooms: Room[]; labels: Record<number, string> } {
+  const n = Math.max(1, Math.floor(count));
+  const result: Room[] = [];
+  // >= newFloor 的楼层整体上移一层
+  const byFloor = new Map<number, Room[]>();
+  for (const r of rooms) {
+    const arr = byFloor.get(r.floor) ?? [];
+    arr.push(r);
+    byFloor.set(r.floor, arr);
+  }
+  for (const [floor, arr] of byFloor) {
+    const shifted = floor >= newFloor ? floor + 1 : floor;
+    result.push(...renumberRoomsOnFloor(arr, shifted));
+  }
+  // 生成插入层的空房
+  for (let i = 0; i < n; i++) {
+    result.push({
+      id: generateId('room'),
+      buildingId,
+      floor: newFloor,
+      number: generateRoomNumber(newFloor, i, n),
+      name: '',
+      isOccupied: false,
+      tenantName: '',
+      monthlyRent: 0,
+    });
+  }
+  return { rooms: result, labels: shiftFloorLabels(labels, newFloor, +1) };
+}
+
+// ============================================================
 // 楼层信息动态推导（统一以真实房间列表为准，不读 building.floors/roomsPerFloor）
 // ============================================================
 

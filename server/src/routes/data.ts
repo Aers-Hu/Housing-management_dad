@@ -135,6 +135,52 @@ router.post('/buildings/:id/floors', (req, res) => {
   res.status(201).json({ building });
 });
 
+// 在指定楼层的上方/下方插入一层空房（上方楼层整体上移重编号）
+router.post('/buildings/:id/floors/insert', (req, res) => {
+  const userId = getUserId(req);
+  const level = Buildings.accessLevel(userId, req.params.id);
+  if (!level) return res.status(404).json({ error: '楼房不存在或无权访问' });
+  if (level === 'read') return res.status(403).json({ error: '只读权限，不能修改' });
+
+  const { floor, position, count } = req.body ?? {};
+  if (typeof floor !== 'number' || floor < 1) {
+    return res.status(400).json({ error: '缺少有效的 floor（目标楼层）' });
+  }
+  if (position !== 'above' && position !== 'below') {
+    return res.status(400).json({ error: "position 须为 'above' 或 'below'" });
+  }
+  if (typeof count !== 'number' || count < 1) {
+    return res.status(400).json({ error: '缺少有效的 count（每层房间数）' });
+  }
+  const building = Buildings.insertFloor(req.params.id, floor, position, count);
+  res.status(201).json({ building });
+});
+
+// 删除整层：删该层所有房间，上方楼层整体下移重编号。该层有租客则拒绝（409）。
+router.delete('/buildings/:id/floors/:floor', (req, res) => {
+  const userId = getUserId(req);
+  const level = Buildings.accessLevel(userId, req.params.id);
+  if (!level) return res.status(404).json({ error: '楼房不存在或无权访问' });
+  if (level === 'read') return res.status(403).json({ error: '只读权限，不能修改' });
+
+  const floor = Number(req.params.floor);
+  if (!Number.isInteger(floor) || floor < 1) {
+    return res.status(400).json({ error: '楼层号无效' });
+  }
+  try {
+    const building = Buildings.deleteFloor(req.params.id, floor);
+    res.json({ building });
+  } catch (e) {
+    if (e instanceof RoomsOccupiedError) {
+      return res.status(409).json({
+        error: `第 ${floor} 层存在租客，无法删除整层，请先为这些房间退租或转移租客`,
+        occupiedFloors: e.occupiedFloors,
+      });
+    }
+    throw e;
+  }
+});
+
 // 删除楼房（owner 或有写权限者；写=完全控制，含删楼）
 router.delete('/buildings/:id', (req, res) => {
   const userId = getUserId(req);

@@ -63,6 +63,10 @@ export default function BuildingScreen() {
   // 添加楼层中标志（防重复点击）
   const [addingFloor, setAddingFloor] = useState(false);
 
+  // 楼层操作菜单（长按楼层名弹出：向上加层 / 向下加层 / 删除整层）
+  const [floorActionVisible, setFloorActionVisible] = useState(false);
+  const [actionFloor, setActionFloor] = useState<number | null>(null);
+
   const loadData = useCallback(async () => {
     if (!buildingId) return;
 
@@ -304,6 +308,85 @@ export default function BuildingScreen() {
     }
   };
 
+  // 长按楼层名 → 弹出楼层操作菜单
+  const handleFloorLongPress = (floor: number) => {
+    if (readOnly) {
+      Alert.alert('权限不足', '你无法修改该用户的数据');
+      return;
+    }
+    setActionFloor(floor);
+    setFloorActionVisible(true);
+  };
+
+  // 新插入层的房间数：优先沿用目标层间数，其次全楼每层间数，再不行放 1 间
+  const resolveInsertCount = (floor: number): number => {
+    const ownCount = rooms.filter((r) => r.floor === floor).length;
+    if (ownCount > 0) return ownCount;
+    const rpf = deriveRoomsPerFloor(rooms);
+    return rpf ?? 1;
+  };
+
+  // 向上(更高层)/向下(更低层)插入楼层
+  const handleInsertFloor = async (position: 'above' | 'below') => {
+    if (!building || actionFloor == null) return;
+    const target = actionFloor;
+    const count = resolveInsertCount(target);
+    setFloorActionVisible(false);
+    try {
+      await StorageService.insertFloor(building, target, position, count);
+      await loadData();
+      Toast.show({
+        type: 'success',
+        text1: `已在第 ${target} 层${position === 'above' ? '上方' : '下方'}插入一层（${count} 间空房）`,
+      });
+    } catch (e) {
+      if (e instanceof NetworkError) Toast.show({ type: 'error', text1: '连不上服务器' });
+      else if (e instanceof ApiError) Alert.alert('插入失败', e.message);
+      else Toast.show({ type: 'error', text1: '插入楼层失败' });
+    }
+  };
+
+  // 删除整层（先校验租客，再二次确认）
+  const handleDeleteFloor = () => {
+    if (!building || actionFloor == null) return;
+    const target = actionFloor;
+    const floorRooms = rooms.filter((r) => r.floor === target);
+    const occupiedCount = floorRooms.filter((r) => r.isOccupied).length;
+    setFloorActionVisible(false);
+
+    if (occupiedCount > 0) {
+      setTimeout(() => {
+        Alert.alert('无法删除', `第 ${target} 层有 ${occupiedCount} 间房当前有租客入住，请先退租或转移后再删除整层。`);
+      }, 300);
+      return;
+    }
+
+    setTimeout(() => {
+      Alert.alert(
+        '确认删除整层',
+        `确定要删除 ${getFloorLabel(building, target)} 楼的全部 ${floorRooms.length} 间房吗？上方楼层会自动下移重排，此操作不可恢复。`,
+        [
+          { text: '取消', style: 'cancel' },
+          {
+            text: '删除整层',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await StorageService.deleteFloor(building, target);
+                Toast.show({ type: 'success', text1: `已删除 ${getFloorLabel(building, target)} 楼` });
+                await loadData();
+              } catch (e) {
+                if (e instanceof NetworkError) Toast.show({ type: 'error', text1: '连不上服务器' });
+                else if (e instanceof ApiError) Alert.alert('删除失败', e.message);
+                else Toast.show({ type: 'error', text1: '删除楼层失败' });
+              }
+            },
+          },
+        ]
+      );
+    }, 300);
+  };
+
   // 打开批量命名弹窗
   const openBatchModal = () => {
     const draft: Record<string, string> = {};
@@ -395,6 +478,21 @@ export default function BuildingScreen() {
           </View>
         </View>
 
+        {/* 添加楼层（从顶楼往上加，放在列表最上方便于操作） */}
+        {!readOnly && (
+          <TouchableOpacity
+            style={styles.addFloorButton}
+            onPress={handleAddFloor}
+            activeOpacity={0.8}
+            disabled={addingFloor}
+          >
+            <FontAwesome6 name="layer-group" size={14} color="#6C63FF" />
+            <Text style={styles.addFloorButtonText}>
+              {addingFloor ? '添加中…' : '+ 添加楼层'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* 楼层列表 */}
         {floors.map((floor) => {
           const floorRooms = groupedRooms.get(floor) || [];
@@ -404,7 +502,9 @@ export default function BuildingScreen() {
                 <TouchableOpacity
                   style={styles.floorBadge}
                   onPress={() => onFloorTitleTap(floor)}
+                  onLongPress={() => handleFloorLongPress(floor)}
                   activeOpacity={readOnly ? 1 : 0.6}
+                  delayLongPress={500}
                 >
                   <Text style={styles.floorBadgeText}>{getFloorLabel(building, floor)} 楼</Text>
                 </TouchableOpacity>
@@ -467,20 +567,6 @@ export default function BuildingScreen() {
           );
         })}
 
-        {!readOnly && (
-          <TouchableOpacity
-            style={styles.addFloorButton}
-            onPress={handleAddFloor}
-            activeOpacity={0.8}
-            disabled={addingFloor}
-          >
-            <FontAwesome6 name="layer-group" size={14} color="#6C63FF" />
-            <Text style={styles.addFloorButtonText}>
-              {addingFloor ? '添加中…' : '+ 添加楼层'}
-            </Text>
-          </TouchableOpacity>
-        )}
-
         <View style={styles.bottomPadding} />
       </ScrollView>
 
@@ -540,17 +626,70 @@ export default function BuildingScreen() {
               {actionRoom?.number}{actionRoom?.name ? ` · ${actionRoom.name}` : ''}
             </Text>
             <TouchableOpacity style={styles.actionItem} onPress={openRenameFromAction}>
-              <Text style={styles.actionItemText}>✏️  命名房间</Text>
+              <View style={styles.actionItemRow}>
+                <FontAwesome6 name="pencil" size={15} color="#2D3436" />
+                <Text style={styles.actionItemText}>命名房间</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionItem, styles.actionItemDanger]}
               onPress={handleDeleteRoom}
             >
-              <Text style={[styles.actionItemText, styles.actionItemTextDanger]}>🗑️  删除房间</Text>
+              <View style={styles.actionItemRow}>
+                <FontAwesome6 name="trash-can" size={15} color="#FF6B6B" />
+                <Text style={[styles.actionItemText, styles.actionItemTextDanger]}>删除房间</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionItem, styles.actionItemCancel]}
               onPress={() => setRoomActionVisible(false)}
+            >
+              <Text style={styles.actionItemText}>取消</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ========== 楼层操作菜单 Modal（长按楼层名弹出） ========== */}
+      <Modal
+        visible={floorActionVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFloorActionVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setFloorActionVisible(false)}
+        >
+          <View style={styles.actionSheet}>
+            <Text style={styles.actionTitle}>
+              {actionFloor != null ? `${getFloorLabel(building, actionFloor)} 楼` : ''}
+            </Text>
+            <TouchableOpacity style={styles.actionItem} onPress={() => handleInsertFloor('above')}>
+              <View style={styles.actionItemRow}>
+                <FontAwesome6 name="arrow-up" size={15} color="#2D3436" />
+                <Text style={styles.actionItemText}>向上添加楼层（更高层）</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionItem} onPress={() => handleInsertFloor('below')}>
+              <View style={styles.actionItemRow}>
+                <FontAwesome6 name="arrow-down" size={15} color="#2D3436" />
+                <Text style={styles.actionItemText}>向下添加楼层（更低层）</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemDanger]}
+              onPress={handleDeleteFloor}
+            >
+              <View style={styles.actionItemRow}>
+                <FontAwesome6 name="trash-can" size={15} color="#FF6B6B" />
+                <Text style={[styles.actionItemText, styles.actionItemTextDanger]}>删除整层</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionItem, styles.actionItemCancel]}
+              onPress={() => setFloorActionVisible(false)}
             >
               <Text style={styles.actionItemText}>取消</Text>
             </TouchableOpacity>
@@ -613,10 +752,16 @@ export default function BuildingScreen() {
           <View style={styles.actionSheet}>
             <Text style={styles.actionTitle}>编辑楼房</Text>
             <TouchableOpacity style={styles.actionItem} onPress={openFloorLabelModal}>
-              <Text style={styles.actionItemText}>🏢  修改楼层号</Text>
+              <View style={styles.actionItemRow}>
+                <FontAwesome6 name="building" size={15} color="#2D3436" />
+                <Text style={styles.actionItemText}>修改楼层号</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionItem} onPress={openBatchModal}>
-              <Text style={styles.actionItemText}>✏️  批量命名房间</Text>
+              <View style={styles.actionItemRow}>
+                <FontAwesome6 name="pencil" size={15} color="#2D3436" />
+                <Text style={styles.actionItemText}>批量命名房间</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionItem, styles.actionItemCancel]}
@@ -778,7 +923,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 14,
-    marginTop: 8,
+    marginBottom: 20,
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: '#6C63FF',
@@ -1089,6 +1234,11 @@ const styles = StyleSheet.create({
   },
   actionItemDanger: {
     backgroundColor: '#FFF0F0',
+  },
+  actionItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   actionItemText: {
     fontSize: 16,

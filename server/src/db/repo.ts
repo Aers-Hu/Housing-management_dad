@@ -15,6 +15,24 @@ function generateRoomNumber(floor: number, index: number, roomsPerFloor: number)
   return `${floor}${padded}`;
 }
 
+// 楼层标签整体移位（与手机端 roomTypes.shiftFloorLabels 对齐）：
+//   把 >= fromFloor 的标签键加 delta（+1 插入 / -1 删除）；删除时 fromFloor 自身标签丢弃。
+function shiftLabels(
+  labels: Record<string, string> | undefined,
+  fromFloor: number,
+  delta: number
+): Record<string, string> | undefined {
+  if (!labels) return undefined;
+  const result: Record<string, string> = {};
+  for (const [floorStr, label] of Object.entries(labels)) {
+    const floor = Number(floorStr);
+    if (delta < 0 && floor === fromFloor) continue;
+    const newFloor = floor >= fromFloor ? floor + delta : floor;
+    if (newFloor >= 1) result[String(newFloor)] = label;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 // C 策略：减少楼层/每层房间数时，若被波及（超出新范围）的房间含租客，
 // 抛出此错误拒绝整个修改，由路由层捕获并返回 409 + 中文提示。
 export class RoomsOccupiedError extends Error {
@@ -237,6 +255,105 @@ export const Buildings = {
 
   delete(id: string): void {
     db.prepare('DELETE FROM buildings WHERE id = ?').run(id); // 级联删 rooms
+  },
+
+  // 删除整层：删该层所有房间，上方楼层(> floor)整体下移一层并重编号；floorLabels 与 floors 同步。
+  //   若该层存在租客 → 抛 RoomsOccupiedError（由路由返回 409）。
+  deleteFloor(id: string, floor: number): Building | null {
+    const existing = this.findById(id);
+    if (!existing) return null;
+
+    const rooms = Rooms.listByBuilding(id);
+    const inTarget = rooms.filter((r) => r.floor === floor);
+    if (inTarget.length === 0) return existing; // 该层无房间，幂等返回
+    if (inTarget.some((r) => r.isOccupied)) throw new RoomsOccupiedError([floor]);
+
+    const renumberFloor = (arr: Room[], newFloor: number) => {
+      const sorted = [...arr].sort((a, b) =>
+        a.number.localeCompare(b.number, undefined, { numeric: true })
+      );
+      sorted.forEach((r, i) => updateFloorNumber.run(newFloor, generateRoomNumber(newFloor, i, sorted.length), r.id));
+    };
+    const updateFloorNumber = db.prepare('UPDATE rooms SET floor = ?, number = ? WHERE id = ?');
+    const delStmt = db.prepare('DELETE FROM rooms WHERE id = ?');
+
+    db.exec('BEGIN');
+    try {
+      for (const r of inTarget) delStmt.run(r.id);
+      // 上方楼层整体下移
+      const byFloor = new Map<number, Room[]>();
+      for (const r of rooms) {
+        if (r.floor <= floor) continue;
+        const arr = byFloor.get(r.floor) ?? [];
+        arr.push(r);
+        byFloor.set(r.floor, arr);
+      }
+      for (const [f, arr] of byFloor) renumberFloor(arr, f - 1);
+
+      const remainingFloors = [...new Set(rooms.filter((r) => r.floor !== floor).map((r) => r.floor))];
+      const newMax = remainingFloors.length > 0
+        ? Math.max(...remainingFloors.map((f) => (f > floor ? f - 1 : f)))
+        : 0;
+      const newLabels = shiftLabels(existing.floorLabels, floor, -1);
+      db.prepare('UPDATE buildings SET floors = ?, floor_labels = ? WHERE id = ?')
+        .run(newMax, newLabels ? JSON.stringify(newLabels) : null, id);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+    return this.findById(id);
+  },
+
+  // 插入一层：在 newFloor 位置插入 count 间空房，>= newFloor 的原楼层整体上移一层并重编号。
+  //   position：'above' = 插在 targetFloor 之上(更高层，newFloor=targetFloor+1)；
+  //             'below' = 插在 targetFloor 之下(更低层，newFloor=targetFloor)。
+  insertFloor(id: string, targetFloor: number, position: 'above' | 'below', count: number): Building | null {
+    const existing = this.findById(id);
+    if (!existing) return null;
+
+    const newFloor = position === 'above' ? targetFloor + 1 : targetFloor;
+    const n = Math.max(1, Math.floor(count));
+    const rooms = Rooms.listByBuilding(id);
+
+    const updateFloorNumber = db.prepare('UPDATE rooms SET floor = ?, number = ? WHERE id = ?');
+    const insertRoom = db.prepare(
+      `INSERT INTO rooms (id, building_id, floor, number, name, is_occupied, tenant_name, monthly_rent)
+       VALUES (?, ?, ?, ?, '', 0, '', 0)`
+    );
+
+    db.exec('BEGIN');
+    try {
+      // >= newFloor 的楼层整体上移一层（从高到低处理，避免无谓的同号中间态）
+      const byFloor = new Map<number, Room[]>();
+      for (const r of rooms) {
+        if (r.floor < newFloor) continue;
+        const arr = byFloor.get(r.floor) ?? [];
+        arr.push(r);
+        byFloor.set(r.floor, arr);
+      }
+      const floorsDesc = [...byFloor.keys()].sort((a, b) => b - a);
+      for (const f of floorsDesc) {
+        const arr = byFloor.get(f)!.sort((a, b) =>
+          a.number.localeCompare(b.number, undefined, { numeric: true })
+        );
+        arr.forEach((r, i) => updateFloorNumber.run(f + 1, generateRoomNumber(f + 1, i, arr.length), r.id));
+      }
+      // 插入新空层
+      for (let i = 0; i < n; i++) {
+        insertRoom.run(genId('room'), id, newFloor, generateRoomNumber(newFloor, i, n));
+      }
+
+      const newMax = (rooms.length > 0 ? Math.max(...rooms.map((r) => r.floor)) : 0) + 1;
+      const newLabels = shiftLabels(existing.floorLabels, newFloor, +1);
+      db.prepare('UPDATE buildings SET floors = ?, floor_labels = ? WHERE id = ?')
+        .run(Math.max(newMax, newFloor), newLabels ? JSON.stringify(newLabels) : null, id);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+    return this.findById(id);
   },
 
   // 判断用户对某楼房的权限：owner / write / read / null(无权)

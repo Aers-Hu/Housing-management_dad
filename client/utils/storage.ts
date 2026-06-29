@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Building, Room, generateId, generateBuildingRooms, rebuildRoomsCStrategy, generateRoomNumber, deriveFloorList } from './roomTypes';
+import { Building, Room, generateId, generateBuildingRooms, rebuildRoomsCStrategy, generateRoomNumber, deriveFloorList, buildDeleteFloor, buildInsertFloor } from './roomTypes';
 import { apiRequest, NetworkError, ApiError } from './api';
 import { enqueueRoomUpdate, flushOutbox } from './sync';
 import { isOnline, scheduleProbe } from './netstatus';
@@ -255,6 +255,78 @@ async function addFloor(buildingId: string, count: number): Promise<void> {
   );
 }
 
+// 删除整层：删该层房间，上方楼层整体下移重编号。该层有租客则抛 ApiError 409（与在线一致）。
+async function deleteFloor(building: Building, floor: number): Promise<void> {
+  const buildingId = building.id;
+  const deleteLocal = async () => {
+    const rooms = await cacheGetRooms(buildingId);
+    const res = buildDeleteFloor(rooms, building.floorLabels, floor);
+    if (res.occupied) {
+      throw new ApiError(409, `第 ${floor} 层存在租客，无法删除整层，请先为这些房间退租或转移租客`);
+    }
+    await cacheSetRooms(buildingId, res.rooms!);
+    await updateBuildingLabelsLocal(buildingId, res.labels);
+  };
+  return onlineFirst(
+    async () => {
+      await apiRequest(`/buildings/${buildingId}/floors/${floor}`, { method: 'DELETE' });
+      await refreshBuildingCache(buildingId);
+    },
+    deleteLocal,
+  );
+}
+
+// 插入一层：在目标层上方(更高层)/下方(更低层)插入空房，上方楼层整体上移重编号。
+async function insertFloor(
+  building: Building,
+  targetFloor: number,
+  position: 'above' | 'below',
+  count: number
+): Promise<void> {
+  const buildingId = building.id;
+  const insertLocal = async () => {
+    const rooms = await cacheGetRooms(buildingId);
+    const newFloor = position === 'above' ? targetFloor + 1 : targetFloor;
+    const res = buildInsertFloor(buildingId, rooms, building.floorLabels, newFloor, count);
+    await cacheSetRooms(buildingId, res.rooms);
+    await updateBuildingLabelsLocal(buildingId, res.labels);
+  };
+  return onlineFirst(
+    async () => {
+      await apiRequest(`/buildings/${buildingId}/floors/insert`, {
+        method: 'POST',
+        body: { floor: targetFloor, position, count },
+      });
+      await refreshBuildingCache(buildingId);
+    },
+    insertLocal,
+  );
+}
+
+// 从主库重新拉取该楼房间与元数据，覆盖本地缓存
+async function refreshBuildingCache(buildingId: string): Promise<void> {
+  try {
+    const detail = await apiRequest<{ building: Building; rooms: Room[] }>(`/buildings/${buildingId}`);
+    await cacheSetRooms(buildingId, detail.rooms);
+    const list = await cacheGetBuildings();
+    const idx = list.findIndex((b) => b.id === buildingId);
+    if (idx !== -1) { list[idx] = detail.building; await cacheSetBuildings(list); }
+  } catch {}
+}
+
+// 离线本地更新某楼的 floorLabels 缓存（楼层移位后标签同步）
+async function updateBuildingLabelsLocal(
+  buildingId: string,
+  labels: Record<number, string> | undefined
+): Promise<void> {
+  const list = await cacheGetBuildings();
+  const idx = list.findIndex((b) => b.id === buildingId);
+  if (idx !== -1) {
+    list[idx] = { ...list[idx], floorLabels: labels };
+    await cacheSetBuildings(list);
+  }
+}
+
 // ============================================================
 // Room
 // ============================================================
@@ -432,6 +504,8 @@ export const StorageService = {
   updateBuilding,
   deleteBuilding,
   addFloor,
+  deleteFloor,
+  insertFloor,
   // Rooms
   loadRooms,
   saveRoomsForBuilding,
