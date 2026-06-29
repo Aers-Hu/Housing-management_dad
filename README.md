@@ -63,6 +63,7 @@
 | `frpc.toml` | 隧道实际配置，**含服务器 IP/Token，不入库** |
 | `install-autostart.bat` | 注册「开机自启」到当前用户启动项 |
 | `备份数据库.bat` / `backup-db.ps1` | 手动备份数据库到 `backups/`，自动保留最近 14 天 |
+| `安装定时备份.bat` / `install-backup-task.ps1` | 一键注册「每天 03:00 自动备份」计划任务（`HouseApp_DailyBackup`） |
 | `frpc.exe` | frp 隧道客户端（需自行下载放入，不入库） |
 
 ### 首次使用
@@ -91,7 +92,7 @@
 租客数据就是一个文件 `%APPDATA%\HouseApp\housing.db`，**务必定期备份**（硬盘损坏 = 数据全丢）。
 
 - **手动：** 双击 `备份数据库.bat`
-- **自动：** 用 Windows「任务计划程序」添加定时任务指向 `备份数据库.bat`
+- **自动（推荐）：** 双击 `安装定时备份.bat`，一键注册「每天 03:00 自动备份」的 Windows 计划任务（`HouseApp_DailyBackup`），保留最近 14 天
 - **异地：** 定期将 `launcher/backups/` 复制到 U 盘 / 网盘
 
 ---
@@ -110,11 +111,11 @@ python house_management.py
 ### 打包为 EXE
 
 ```bash
-# Windows 下双击或执行（内部用 PyInstaller）
+# Windows 下双击或执行（内部用 PyInstaller，单文件模式 --onefile）
 build.bat
 ```
 
-打包产物位于 `dist/楼房管理系统.exe`，打包配置见 `楼房管理系统.spec`。
+打包产物位于 `dist/楼房管理系统.exe`，打包配置见 `楼房管理系统.spec`。打包工具 PyInstaller 列在根目录 `requirements.txt`（`pyinstaller>=6.0.0`，仅打包用；运行桌面端本身只需标准库）。
 
 ### 相关文件
 
@@ -177,13 +178,19 @@ pnpm run start    # node dist/index.js，端口默认 5000（配合云部署）
 | GET | `/health` | 健康检查 |
 | POST | `/auth/register`、`/auth/login` | 注册 / 登录（免 token） |
 | GET | `/auth/me` | 校验 token |
+| GET | `/auth/users/lookup` | 按用户名查用户 ID（账号授权用） |
 | GET | `/buildings` | 列出可访问的楼房（自有 + 被授权） |
-| GET/POST/PUT/DELETE | `/buildings/:id` 等 | 楼房增删改查 |
-| PUT/POST/DELETE | `/rooms/:id`、`/buildings/:id/rooms` | 房间增删改查 |
+| GET/POST | `/buildings`、`/buildings/:id` | 楼房创建 / 详情（详情含房间与权限，为同步主接口） |
+| PUT/DELETE | `/buildings/:id` | 修改 / 删除楼房（改层数走 C 策略防误删租客） |
+| POST | `/buildings/:id/floors` | 在顶层之上新增一层空房 |
+| POST | `/buildings/:id/floors/insert` | 在指定层 above/below 插入一层，上方楼层整体重编号 |
+| DELETE | `/buildings/:id/floors/:floor` | 删除整层并下移上方楼层；该层有租客时返回 409 |
+| PUT/POST/DELETE | `/rooms/:id`、`/buildings/:id/rooms` | 房间增删改（手机离线重放的改动带 `X-Offline-Replay` 头进待审表） |
 | POST/GET | `/access-requests` 系列 | 申请查看其他用户楼房、收件箱、发件箱、同意/拒绝 |
 | GET/PUT/DELETE | `/grantees` 系列 | 授权管理（owner/write/read 三级权限、撤销授权） |
 | GET | `/pending-changes` | 列出待审的手机端离线改动（楼主见自己名下未决的；管理员见全部楼主待审） |
 | POST | `/pending-changes/:id/resolve` | 批准 / 拒绝某条待审改动（楼主先到先生效；管理员为最终裁决，可覆盖回滚） |
+| GET/DELETE | `/pending-changes/history` 系列 | 审批历史查看 / 删除单条 / 清空（仅管理员） |
 
 ---
 
@@ -209,9 +216,19 @@ client/
 ├── components/         # 可复用组件（Screen.tsx 为页面容器）
 ├── contexts/           # AuthContext 等
 ├── hooks/              # 自定义 Hooks
-├── utils/              # api / sync / comm / storage / config / roomTypes / netstatus
+├── utils/              # api / sync / comm / storage / config / roomTypes / netstatus / accounts
 └── assets/
 ```
+
+### 主要操作
+
+- **首页**：楼房列表与各楼统计，添加/编辑/删除楼房，免密切换账号，账号通讯入口（申请查看他人楼房、收件箱审批、被授权人权限管理）
+- **楼层管理**（单栋楼页面）：
+  - **长按楼层名** → 菜单：向上添加楼层（更高层）/ 向下添加楼层（更低层）/ 删除整层。插入/删除时楼层保持连续，上方楼层整体移位重编号；删除整层带二次确认，该层有租客则拦截
+  - **双击楼层名** → 编辑该层显示标签（可填「停车层」「B1」等，留空恢复默认）
+  - 列表顶部「+ 添加楼层」在最高层之上加层；每层右侧「+ 房间」单间添加
+  - **长按房间** → 命名 / 删除（入住中的房间禁止删除）
+- **房间详情**：入住开关、租客姓名、月租、租期起止与月数、备注、每月交租记录勾选、转移租客到空房
 
 ### 运行
 
@@ -231,6 +248,21 @@ npx eas build --platform android --profile production # 构建正式版
 ```
 
 EAS 配置见 `client/eas.json`，项目 ID：`8ddfb094-5c7b-4bf2-8faf-a841593477a7`。Android 正式版已允许明文 HTTP（`android:usesCleartextTraffic="true"`），以便连接自建 HTTP 服务端。
+
+### 热更新（EAS Update）⚡
+
+纯 JS/TS 改动（界面、`utils/` 逻辑等，**不含原生模块/SDK/配置变更**）无需重新打包 APK，用 EAS Update 直接下发：
+
+```bash
+cd client
+npx eas-cli update --branch preview --message "改动简述" --non-interactive
+```
+
+- channel/branch 目前只有 `preview`，runtimeVersion 固定 `1.0.0`（配置在 `client/app.config.ts` 的 `updates`）
+- App 配置为 `checkAutomatically: ON_LOAD`，客户端 `hooks/useAppUpdate.ts` 在启动及切回前台时自动检查→下载→`reloadAsync` 应用
+- 用户拉取方式：**彻底退出 App → 冷启动下载 → 再重启一次生效**
+- 以下情况必须重新 `eas build` 打包，不能只热更新：新增/升级原生依赖、改 `app.config.ts` 插件/权限/runtimeVersion、升级 Expo SDK
+- 详见 `docs/热更新与服务端更新手册.md`
 
 ### 开发约定
 
@@ -287,11 +319,13 @@ pnpm -w lint:all       # 同时校验
 ## 核心功能
 
 - 管理多栋楼，自定义楼名、层数、每层房间数、楼层显示号
+- 楼层动态增删：手机端长按楼层名可向上/向下插入楼层或删除整层，楼层保持连续、上方楼层自动移位重编号（删整层有租客时拦截）
 - 房间网格按楼层排列（房间多时可横向滚动），点击房间设置：是否入住、租客姓名、每月房租、每月交租记录、租客注解
 - 租期管理：显示租期与剩余月份（按自然月计算）
 - 转移租客（换房时保留注解与交租记录）
 - 批量修改房屋名字
 - 多端数据同步（在线实时写 + 离线缓存兜底）
+- 手机端 JS 改动支持 EAS Update 热更新，免重新打包 APK（详见手机客户端章节）
 - **手机端离线改动审批**：手机断网期间的改动重连后不再静默覆盖主库，而是进入「待审区」，由你在电脑端逐条确认（显示变动内容、提交位置、设备型号、时间）后才落入主库
 - **管理员裁决账号**：内置 `GmAersMess`（仅限本机电脑端登录）可查看全部楼主的待审并做最终裁决，优先级高于楼主，可覆盖/回滚楼主决定
 - 账号间通讯：申请查看其他用户的全部楼房；被申请方可同意/拒绝，并控制被授权人的只读/可写权限（三级权限：owner / write / read）
