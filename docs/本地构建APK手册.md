@@ -112,29 +112,88 @@ function getMetroServerRoot(projectRoot) {
 
 ---
 
-## 六、下次构建的标准流程（给新对话的 AI）
+## 六、让本地 APK 能收热更新（注入 preview channel）⭐ 已验证
+
+**背景**：EAS 云端构建会自动从 `eas.json` 把 `channel: preview` 写进 APK 的 `AndroidManifest`；本地 `gradlew` 构建**没有这一步**，所以默认打出的本地 APK **不带 channel，收不到 `preview` 的热更新**。下面的配置已写入本仓库的 `client/android/`，**未来直接构建即带 channel，无需重做**。换机器/重置 android 工程后才需按此重新注入。
+
+### 配置内容（已在仓库里）
+
+**① `client/android/app/src/main/res/values/strings.xml`** 加一行（双引号必须用反斜杠转义 `\"`，**不能用 `&quot;`**，否则被 aapt 当 quoting 吃掉，JSON 失效）：
+
+```xml
+<string name="expo_updates_request_headers" translatable="false">{\"expo-channel-name\":\"preview\"}</string>
+```
+
+**② `client/android/app/src/main/AndroidManifest.xml`** 在 updates 的 meta-data 区（`EXPO_RUNTIME_VERSION` 那条后）加：
+
+```xml
+<meta-data android:name="expo.modules.updates.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY" android:value="@string/expo_updates_request_headers"/>
+```
+
+> meta-data key `expo.modules.updates.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY` 来自 expo-updates android 源码，是它读 channel 的标准入口。
+
+### 验证 channel 真写进 APK（务必做，别只看构建成功）
+
+重新 `assembleRelease` 后，用 aapt2 解出字符串实际值，**必须是带双引号的合法 JSON**：
+
+```bash
+AAPT="D:/Android/Sdk/build-tools/36.1.0/aapt2.exe"
+"$AAPT" dump resources client/android/app/build/outputs/apk/release/app-release.apk 2>/dev/null \
+  | grep -A1 'expo_updates_request_headers'
+# 期望输出： "{"expo-channel-name":"preview"}"   ← 双引号在
+# 若输出   "{expo-channel-name:preview}"        ← 双引号被吃，错！改用 \" 转义
+```
+
+> ⚠️ 实测踩坑：最初用 `&quot;` 实体，解出来变成无引号的 `{expo-channel-name:preview}`（非法 JSON），channel 失效。改用 `\"` 反斜杠转义后才正确。**所以改完一定要解包验证，不能只看 BUILD SUCCESSFUL。**
+
+---
+
+## 七、如何测试热更新功能
+
+前提：手机装的 APK 必须 ① 绑定了 `preview` channel（EAS preview 包天生有；本地包需按第六节注入）② runtimeVersion 与热更新一致（都是 `1.0.0`）。
+
+测试步骤：
+
+1. **装好带 channel 的 APK**（本地包之间同 debug 签名可覆盖安装；本地包↔EAS 包签名不同，须先卸载，会丢 App 内数据如服务器地址/登录态）。
+2. 打开 App 跑一次（让它记录当前 bundle）。
+3. 在电脑改一处**明显可见**的 JS（例如某界面文字），推热更新：
+   ```bash
+   cd client && npx eas-cli update --branch preview --message "测试热更新" --non-interactive
+   ```
+4. **彻底退出 App**（后台划掉）→ **冷启动**：此时后台静默下载新 bundle（`checkAutomatically: ON_LOAD` 是"本次下载、下次生效"）。
+5. **再彻底退出一次 → 再冷启动**：应看到第 3 步改的内容已变。变了 = 热更新链路通。
+6. 排查：若一直不变，依次确认——APK 是否带 channel（第六节验证）、runtimeVersion 是否都 1.0.0、`eas update` 是否推到 `preview`、手机能否联网到 `u.expo.dev`。
+
+> 想要更直观，可临时在某页加一行带版本号/时间戳的小字，推上去对比。
+
+---
+
+## 八、下次构建的标准流程（给新对话的 AI）
 
 ```bash
 # 1. 体检（换机器时核对第一节表格）
 node --version; java -version; echo $ANDROID_HOME
 
-# 2. 确认 client/metro.config.js 已含 monorepo 配置（watchFolders + nodeModulesPaths）
-#    本仓库已加好；换机器/重置后若没有，按第三节第 1 步补上
+# 2. 确认两项配置已在仓库（本仓库均已加好；换机器/重置后才需补）
+#    - client/metro.config.js 含 monorepo 配置（watchFolders + nodeModulesPaths）—— 第三节
+#    - android channel 注入（strings.xml + AndroidManifest）—— 第六节
 
 # 3. 构建（git bash，子 shell，带环境变量，后台跑）
 (cd /d/HouseApp/housemanagement/client/android && EXPO_NO_METRO_WORKSPACE_ROOT=1 ./gradlew assembleRelease --no-daemon)
 
-# 4. 取产物
+# 4. 取产物 + 验证 channel
 #    client/android/app/build/outputs/apk/release/app-release.apk
+#    用第六节的 aapt2 命令确认 channel 为合法 JSON
 ```
 
 **禁忌**：
 - ① 别用 `cmd.exe //c "gradlew.bat ..."`，只用 `./gradlew`；
-- ② 别漏 `EXPO_NO_METRO_WORKSPACE_ROOT=1`，否则卡在 JS bundle 找不到 entry.js。
+- ② 别漏 `EXPO_NO_METRO_WORKSPACE_ROOT=1`，否则卡在 JS bundle 找不到 entry.js；
+- ③ channel JSON 的双引号别用 `&quot;`，用 `\"`。
 
 ---
 
-## 七、本地构建 vs EAS / 热更新 的取舍
+## 九、本地构建 vs EAS / 热更新 的取舍
 
 | 场景 | 用什么 |
 |---|---|
