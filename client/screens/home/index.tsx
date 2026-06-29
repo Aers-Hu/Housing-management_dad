@@ -11,6 +11,7 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  AppState,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
@@ -136,6 +137,16 @@ export default function HomeScreen() {
       };
     }, [loadData, pollInbox])
   );
+
+  // App 从后台切回前台时立即刷新（无需等 30 秒轮询）
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        loadData();
+      }
+    });
+    return () => sub.remove();
+  }, [loadData]);
 
   // ---- 通讯：申请查看 ----
   const submitRequest = async () => {
