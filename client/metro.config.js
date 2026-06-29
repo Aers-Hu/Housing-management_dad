@@ -2,8 +2,19 @@ const { getDefaultConfig } = require('expo/metro-config');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const connect = require('connect');
 const { withUniwindConfig } = require('uniwind/metro');
+const path = require('path');
 
 const config = getDefaultConfig(__dirname);
+
+// === monorepo 配置：本仓库是 pnpm workspace，依赖被提升到仓库根 ===
+// 让 Metro 监视仓库根、并在 client 与仓库根两处 node_modules 解析依赖，
+// 否则本地打 release bundle 时会找不到 expo-router/entry.js 等（hoist 到根的包）。
+const workspaceRoot = path.resolve(__dirname, '..');
+config.watchFolders = [...(config.watchFolders || []), workspaceRoot];
+config.resolver.nodeModulesPaths = [
+  path.resolve(__dirname, 'node_modules'),
+  path.resolve(workspaceRoot, 'node_modules'),
+];
 
 // 安全地获取 Expo 的默认排除列表
 const existingBlockList = [].concat(config.resolver.blockList || []);
